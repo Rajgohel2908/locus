@@ -294,6 +294,11 @@ class QueryRecord(Base):
     index_run_ids  = Column(IntArray, nullable=False)
     top_k          = Column(Integer, nullable=False)
     min_score      = Column(Float, nullable=False)
+    strategy       = Column(Text, nullable=False, default="dense")
+    filters        = Column(JSONB, nullable=False, default=dict)
+    route          = Column(Text, nullable=True)
+    route_info     = Column(JSONB, nullable=False, default=dict)
+    answer_type    = Column(Text, nullable=False, default="generated")
     status         = Column(Text, nullable=False)  # answered | unverified | insufficient_evidence | llm_error
     answer         = Column(Text, nullable=True)
     latency_ms     = Column(JSONB, default=dict)
@@ -313,6 +318,24 @@ class RetrievalResult(Base):
     score          = Column(Float, nullable=False)
     used_in_prompt = Column(Boolean, nullable=False)
     cited          = Column(Boolean, default=False)
+    signals        = Column(JSONB, nullable=False, default=dict)
+
+
+# ── Phase 5 Table Models ──────────────────────────────────────────────────────
+
+class DocumentOverride(Base):
+    """
+    User overrides for document metadata (published_at, title).
+    Original document rows remain completely immutable.
+    Overrides take effect only during a NEW index run.
+    """
+    __tablename__ = "document_overrides"
+
+    id           = Column(Integer, primary_key=True, index=True)
+    document_id  = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    published_at = Column(DateTime, nullable=True)
+    title        = Column(Text, nullable=True)
+    set_at       = Column(DateTime, default=datetime.utcnow)
 
 
 # ── Init ──────────────────────────────────────────────────────────────────────
@@ -324,6 +347,8 @@ def init_db():
     Phase 2: applies 002_phase2.sql for sources, documents, records.
     Phase 3: applies 003_phase3.sql for versioning, roles, proposals.
     Phase 4: applies 004_phase4.sql for index_runs, chunks, queries, retrieval_results.
+    Phase 5: applies 005_phase5.sql for document_overrides, query strategy/filters, signals.
+    Phase 6: applies 006_phase6.sql for queries.route, queries.route_info, queries.answer_type.
     Safe to call multiple times — all statements use IF NOT EXISTS.
     """
     with engine.connect() as conn:
@@ -333,11 +358,11 @@ def init_db():
             pass   # vector extension optional; ignore if not installed
         conn.commit()
 
-    # Idempotent: creates Phase 1 ORM tables if they don't exist yet
+    # Idempotent: creates Phase 1 and Phase 5 ORM tables if they don't exist yet
     Base.metadata.create_all(bind=engine)
 
     # Apply each SQL migration in order (all use IF NOT EXISTS / ON CONFLICT)
-    for fname in ("002_phase2.sql", "003_phase3.sql", "004_phase4.sql"):
+    for fname in ("002_phase2.sql", "003_phase3.sql", "004_phase4.sql", "005_phase5.sql", "006_phase6.sql"):
         migration_path = Path(__file__).parent / "migrations" / fname
         if migration_path.exists():
             sql = migration_path.read_text(encoding="utf-8-sig")

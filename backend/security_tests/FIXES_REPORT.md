@@ -1,4 +1,5 @@
-﻿# Security Fixes Remediation Report
+﻿
+# Security Fixes Remediation Report
 
 **Date:** 2026-10-15  
 **Project:** Sift Backend (FastAPI + PostgreSQL pgvector RAG Pipeline)  

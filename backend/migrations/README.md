@@ -1,4 +1,4 @@
-﻿# backend/migrations/README.md
+# backend/migrations/README.md
 
 ## How Migrations Work in Sift
 
@@ -14,6 +14,8 @@ Sift uses a **hybrid migration strategy**: SQLAlchemy ORM `create_all` for Phase
 | `002_phase2.sql` | Phase 2 | `sources`, `documents`, `records` |
 | `003_phase3.sql` | Phase 3 | `source_versions`, `column_roles`, `cleaning_proposals` |
 | `004_phase4.sql` | Phase 4 | `index_runs`, `chunks`, `queries`, `retrieval_results` |
+| `005_phase5.sql` | Phase 5 | `document_overrides`, `queries.strategy`, `queries.filters`, `retrieval_results.signals` |
+| `006_phase6.sql` | Phase 6 | `queries.route`, `queries.route_info`, `queries.answer_type` |
 
 ---
 
@@ -25,8 +27,8 @@ Sift uses a **hybrid migration strategy**: SQLAlchemy ORM `create_all` for Phase
 # Phase 1: ORM create_all (idempotent)
 Base.metadata.create_all(bind=engine)
 
-# Phase 2-4: SQL files applied in order
-for fname in ("002_phase2.sql", "003_phase3.sql", "004_phase4.sql"):
+# Phase 2-6: SQL files applied in order
+for fname in ("002_phase2.sql", "003_phase3.sql", "004_phase4.sql", "005_phase5.sql", "006_phase6.sql"):
     migration_path = Path(__file__).parent / "migrations" / fname
     ...
 ```
@@ -35,13 +37,13 @@ All SQL statements use `IF NOT EXISTS` / `ON CONFLICT DO NOTHING` so they are **
 
 ---
 
-### Adding a New Migration (e.g., Phase 5)
+### Adding a New Migration (e.g., Phase 6)
 
-1. Create `backend/migrations/005_phase5.sql` with all your `CREATE TABLE IF NOT EXISTS` statements.
-2. Add `"005_phase5.sql"` to the **ordered list** in `init_db()` in `db.py`:
+1. Create `backend/migrations/006_phase6.sql` with all your `CREATE TABLE IF NOT EXISTS` or `ALTER TABLE` statements.
+2. Add `"006_phase6.sql"` to the **ordered list** in `init_db()` in `db.py`:
 
    ```python
-   for fname in ("002_phase2.sql", "003_phase3.sql", "004_phase4.sql", "005_phase5.sql"):
+   for fname in ("002_phase2.sql", "003_phase3.sql", "004_phase4.sql", "005_phase5.sql", "006_phase6.sql"):
    ```
 
 3. Add any new SQLAlchemy ORM models to `db.py` and call `Base.metadata.create_all()` will pick them up automatically.

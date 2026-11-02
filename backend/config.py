@@ -28,6 +28,14 @@ CHUNK_OVERLAP: int = int(os.getenv("CHUNK_OVERLAP", "120"))
 TOP_K: int = int(os.getenv("TOP_K", "5"))
 MIN_SCORE: float = float(os.getenv("MIN_SCORE", "0.30"))
 
+# Phase 5 Retrieval & Reranking configuration
+RERANK_MODEL: str = os.getenv("RERANK_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
+CANDIDATES_N: int = int(os.getenv("CANDIDATES_N", "20"))
+RRF_K: int = int(os.getenv("RRF_K", "60"))
+RERANK_TOP_N: int = int(os.getenv("RERANK_TOP_N", "20"))
+MIN_BM25: float = float(os.getenv("MIN_BM25", "0.5"))
+MIN_RERANK: float = float(os.getenv("MIN_RERANK", "0.50"))
+
 # LLM generation configuration
 LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "gemini")
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")

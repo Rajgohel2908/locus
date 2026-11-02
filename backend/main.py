@@ -44,6 +44,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Depends
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
+import config
 logger = logging.getLogger(__name__)
 
 # ── Local imports ─────────────────────────────────────────────────────────────
@@ -126,16 +127,42 @@ def startup():
             "DATABASE_URL environment variable is required but not set. "
             "Please configure DATABASE_URL in your environment or backend/.env file."
         )
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    if not gemini_key:
-        raise RuntimeError(
-            "GEMINI_API_KEY environment variable is required but not set. "
-            "Please configure GEMINI_API_KEY in your environment or backend/.env file."
+    gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if getattr(config, "LLM_PROVIDER", "gemini") == "gemini" and not gemini_key:
+        logger.warning(
+            "[WARN] LLM_PROVIDER=gemini but GEMINI_API_KEY is not configured or empty. "
+            "Queries requiring LLM generation will return status 'llm_error'."
+        )
+        print(
+            "[WARN] LLM_PROVIDER=gemini but GEMINI_API_KEY is not configured or empty. "
+            "Queries requiring LLM generation will return status 'llm_error'."
         )
     UPLOAD_DIR.mkdir(exist_ok=True)
     init_db()
     # Phase 3: ensure version 1 exists for any source without one
     _backfill_source_versions()
+
+    # Phase 6A: Model Warm-up (default WARMUP_MODELS=1)
+    warmup = os.getenv("WARMUP_MODELS", "1").strip().lower() in ("1", "true", "yes")
+    if warmup:
+        import time
+        logger.info("Warming up embedder and cross-encoder models...")
+        t0 = time.perf_counter()
+        from indexing.embedder import get_embedder
+        embedder = get_embedder()
+        embedder.embed_query("warmup probe")
+        t_embed = time.perf_counter() - t0
+        logger.info(f"[WARMUP] Embedder loaded and probed in {t_embed:.2f}s")
+        print(f"[WARMUP] Embedder loaded and probed in {t_embed:.2f}s")
+
+        t1 = time.perf_counter()
+        from retrieval.rerank import get_reranker
+        reranker = get_reranker()
+        reranker.rerank("warmup query", [{"chunk_id": -1, "content": "warmup candidate chunk content", "score": 0.5}])
+        t_rerank = time.perf_counter() - t1
+        logger.info(f"[WARMUP] Cross-encoder loaded and probed in {t_rerank:.2f}s")
+        print(f"[WARMUP] Cross-encoder loaded and probed in {t_rerank:.2f}s")
+
     print("[OK] Sift ready. DB tables ready. Uploads dir ready.")
 
 

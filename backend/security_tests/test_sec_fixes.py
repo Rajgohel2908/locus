@@ -38,13 +38,14 @@ def test_sec_stat_01_fail_fast_missing_database_url(monkeypatch):
 
 
 def test_sec_stat_01_fail_fast_missing_gemini_api_key():
-    """Verify that omitting GEMINI_API_KEY fails fast at startup with a clear message."""
+    """Verify that omitting GEMINI_API_KEY logs a startup warning and fails LLM generation with clear configuration error (Review Issue 1)."""
     cmd = [
         sys.executable,
         "-c",
         (
             "import os, sys\n"
             "os.environ['DATABASE_URL'] = 'postgresql+psycopg2://mock:mock@localhost:5432/mock'\n"
+            "os.environ['WARMUP_MODELS'] = '0'\n"
             "os.environ.pop('GEMINI_API_KEY', None)\n"
             "import dotenv\n"
             "dotenv.load_dotenv = lambda *args, **kwargs: None\n"
@@ -53,10 +54,14 @@ def test_sec_stat_01_fail_fast_missing_gemini_api_key():
         )
     ]
     result = subprocess.run(cmd, cwd=str(BACKEND_DIR), capture_output=True, text=True)
-    assert result.returncode != 0, f"Expected process to fail fast when GEMINI_API_KEY is missing, but it succeeded:\n{result.stdout}"
-    assert "GEMINI_API_KEY environment variable is required" in (result.stderr + result.stdout), (
-        f"Expected clear error message mentioning GEMINI_API_KEY, got:\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+    assert "[WARN] LLM_PROVIDER=gemini but GEMINI_API_KEY is not configured" in (result.stderr + result.stdout), (
+        f"Expected startup warning mentioning missing GEMINI_API_KEY, got:\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
     )
+
+    from generation.llm import GeminiLLMClient, LLMError
+    client = GeminiLLMClient(api_key="")
+    with pytest.raises(LLMError, match="GEMINI_API_KEY is not configured or empty"):
+        client.generate("test prompt")
 
 
 def test_sec_stat_01_no_tracked_secrets():

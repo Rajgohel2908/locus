@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 import config
-from db import get_db, Source, Document, Record, SourceVersion, IndexRun, Chunk, safe_json
+from db import get_db, Source, Document, Record, SourceVersion, IndexRun, Chunk, DocumentOverride, safe_json
 from indexing.chunker import chunk_active_source_content
 from indexing.embedder import get_embedder
 
@@ -99,7 +99,17 @@ def create_index_run(
             .all()
         )
 
-        # 3. Chunk active content
+        # 3. Fetch any document overrides for active documents
+        doc_ids = [d.id for d in docs]
+        overrides_list = (
+            db.query(DocumentOverride)
+            .filter(DocumentOverride.document_id.in_(doc_ids))
+            .all()
+            if doc_ids else []
+        )
+        overrides_map = {o.document_id: o for o in overrides_list}
+
+        # 4. Chunk active content with overrides applied
         chunks_data = chunk_active_source_content(
             source_id=source_id,
             source_name=source.name,
@@ -109,6 +119,7 @@ def create_index_run(
             records=recs,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
+            overrides=overrides_map,
         )
 
         # 4. Embed chunks in batches of 32

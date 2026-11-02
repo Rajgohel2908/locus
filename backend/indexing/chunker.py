@@ -87,6 +87,7 @@ def chunk_active_source_content(
     records: List[Any],
     chunk_size: int,
     chunk_overlap: int,
+    overrides: Optional[Dict[int, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Extract and prepare all chunks from active documents and active records
@@ -95,6 +96,9 @@ def chunk_active_source_content(
     Rules enforced:
     - Only content with status == 'active' is indexed. Quarantined and excluded content is skipped.
     - Only content matching the specified source_version is indexed.
+    - Applies document overrides (published_at, title) if provided.
+    - published_at_source set to 'user' if overridden, 'extracted' if from doc, 'unknown' if absent.
+    - Freshness recomputed with existing Phase 2 logic.
     - Skip empty or whitespace-only chunks.
     - Skip exact duplicate chunks within this index run (deduplication by content_hash).
     - Unstructured documents: chunked via RecursiveCharacterTextSplitter.
@@ -119,8 +123,30 @@ def chunk_active_source_content(
             chunk_overlap=chunk_overlap,
         )
 
-        doc_published_at = getattr(doc, "published_at", None)
+        doc_id = getattr(doc, "id", None)
+        doc_override = overrides.get(doc_id) if (overrides and doc_id is not None) else None
+
+        if doc_override and getattr(doc_override, "title", None) is not None:
+            doc_title = doc_override.title
+        else:
+            doc_title = getattr(doc, "title", None)
+
+        if doc_override and getattr(doc_override, "published_at", None) is not None:
+            doc_published_at = doc_override.published_at
+            published_at_source = "user"
+        elif getattr(doc, "published_at", None) is not None:
+            doc_published_at = getattr(doc, "published_at", None)
+            published_at_source = "extracted"
+        else:
+            doc_published_at = None
+            published_at_source = "unknown"
+
         freshness_flag = check_freshness(doc_published_at)["flag"]
+        published_at_str = (
+            doc_published_at.isoformat()
+            if hasattr(doc_published_at, "isoformat")
+            else (str(doc_published_at) if doc_published_at else None)
+        )
 
         for sub_idx, chunk_text in enumerate(text_chunks):
             chunk_text = chunk_text.strip()
@@ -137,13 +163,14 @@ def chunk_active_source_content(
                 "source_id": source_id,
                 "source_name": source_name,
                 "source_type": source_type,
-                "document_id": getattr(doc, "id", None),
-                "title": getattr(doc, "title", None),
+                "document_id": doc_id,
+                "title": doc_title,
                 "url": getattr(doc, "url", None),
                 "page_number": getattr(doc, "page_number", None),
                 "modality": getattr(doc, "modality", "text"),
                 "extraction_confidence": getattr(doc, "extraction_confidence", None),
-                "published_at": doc_published_at.isoformat() if doc_published_at else None,
+                "published_at": published_at_str,
+                "published_at_source": published_at_source,
                 "freshness": freshness_flag,
                 "source_version": source_version,
                 "chunk_index": global_chunk_idx,
@@ -151,7 +178,7 @@ def chunk_active_source_content(
 
             chunks.append({
                 "source_id": source_id,
-                "document_id": getattr(doc, "id", None),
+                "document_id": doc_id,
                 "record_id": None,
                 "chunk_index": global_chunk_idx,
                 "content": chunk_text,
@@ -189,8 +216,14 @@ def chunk_active_source_content(
 
         meta = {
             "source_id": source_id,
+            "source_name": source_name,
+            "source_type": source_type,
             "record_id": getattr(rec, "id", None),
             "row_index": getattr(rec, "row_index", None),
+            "modality": "structured",
+            "published_at": None,
+            "published_at_source": "unknown",
+            "freshness": "unknown",
             "source_version": source_version,
             "flags": flags,
         }

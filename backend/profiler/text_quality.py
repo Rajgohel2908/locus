@@ -14,6 +14,7 @@ check_short_content(text)       -> warn if under 30 words
 check_injection_suspect(text)   -> flag prompt-injection-like patterns
 """
 
+import os
 import hashlib
 import re
 from datetime import datetime, timezone
@@ -201,7 +202,17 @@ def check_freshness(published_at: Optional[datetime]) -> dict:
         }
 
     # Make both datetimes timezone-aware for safe comparison
-    now = datetime.now(timezone.utc)
+    ref_env = os.getenv("FRESHNESS_REFERENCE_DATE")
+    if ref_env:
+        try:
+            now = datetime.fromisoformat(ref_env.replace("Z", "+00:00"))
+            if now.tzinfo is None:
+                now = now.replace(tzinfo=timezone.utc)
+        except Exception:
+            now = datetime.now(timezone.utc)
+    else:
+        now = datetime.now(timezone.utc)
+
     if published_at.tzinfo is None:
         published_at = published_at.replace(tzinfo=timezone.utc)
 

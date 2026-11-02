@@ -5,7 +5,7 @@ Retrieves top-k chunks for a query from active index runs using cosine distance.
 Falls back to numpy cosine calculation when running tests on SQLite.
 """
 
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Set
 import numpy as np
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -50,6 +50,7 @@ def retrieve_dense(
     index_run_id: Optional[int] = None,
     top_k: int = 5,
     embedder: Optional[Embedder] = None,
+    allowed_chunk_ids: Optional[Set[int]] = None,
 ) -> Tuple[List[Dict[str, Any]], List[int], List[float]]:
     """
     Execute dense vector cosine similarity search against chunks.
@@ -70,6 +71,10 @@ def retrieve_dense(
     if not source_ids and index_run_id is None:
         return [], [], []
 
+    # If allowed_chunk_ids was explicitly filtered to empty, no chunks can match
+    if allowed_chunk_ids is not None and len(allowed_chunk_ids) == 0:
+        return [], [], []
+
     # 1. Resolve index runs to search within
     run_ids = resolve_index_run_ids(db, source_ids=source_ids, index_run_id=index_run_id)
     if not run_ids:
@@ -85,30 +90,44 @@ def retrieve_dense(
     results = []
 
     if is_postgres:
+        # Tune HNSW parameters for filtered scan quality
+        try:
+            db.execute(text("SET LOCAL hnsw.ef_search = 200;"))
+        except Exception:
+            pass
+        try:
+            db.execute(text("SET LOCAL hnsw.iterative_scan = 'relaxed_order';"))
+        except Exception:
+            pass
+
         # Format vector as string literal for pgvector: '[0.1,0.2,...]'
         vec_literal = "[" + ",".join(str(x) for x in query_vec) + "]"
 
-        # Plain pgvector cosine distance: score = 1.0 - (embedding <=> :vec)
-        # We query top_k matching chunks in resolved index runs
-        sql = text("""
+        # Build query with optional allowed_chunk_ids filter
+        where_clauses = ["index_run_id = ANY(:run_ids)"]
+        params = {
+            "vec_literal": vec_literal,
+            "run_ids": run_ids,
+            "top_k": top_k,
+        }
+
+        if allowed_chunk_ids is not None:
+            where_clauses.append("id = ANY(:allowed_ids)")
+            params["allowed_ids"] = list(allowed_chunk_ids)
+
+        where_sql = " AND ".join(where_clauses)
+        sql = text(f"""
             SELECT 
                 id, index_run_id, source_id, document_id, record_id,
                 chunk_index, content, metadata,
                 1.0 - (embedding <=> CAST(:vec_literal AS vector)) AS score
             FROM chunks
-            WHERE index_run_id = ANY(:run_ids)
+            WHERE {where_sql}
             ORDER BY embedding <=> CAST(:vec_literal AS vector) ASC
             LIMIT :top_k;
         """)
 
-        rows = db.execute(
-            sql,
-            {
-                "vec_literal": vec_literal,
-                "run_ids": run_ids,
-                "top_k": top_k,
-            },
-        ).fetchall()
+        rows = db.execute(sql, params).fetchall()
 
         for rank, r in enumerate(rows, start=1):
             meta = r.metadata if isinstance(r.metadata, dict) else {}
@@ -136,6 +155,8 @@ def retrieve_dense(
         for ch in all_chunks:
             if ch.embedding is None:
                 continue
+            if allowed_chunk_ids is not None and ch.id not in allowed_chunk_ids:
+                continue
             emb = np.array(ch.embedding, dtype=np.float32)
             c_norm = np.linalg.norm(emb)
             if q_norm > 0 and c_norm > 0:
@@ -144,8 +165,8 @@ def retrieve_dense(
                 sim = 0.0
             scored.append((sim, ch))
 
-        # Sort descending by similarity
-        scored.sort(key=lambda x: x[0], reverse=True)
+        # Sort descending by similarity, tie-breaking by chunk id
+        scored.sort(key=lambda x: (-x[0], x[1].id))
         top_matches = scored[:top_k]
 
         for rank, (score, ch) in enumerate(top_matches, start=1):
