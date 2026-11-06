@@ -92,6 +92,21 @@ from scripts.reset_demo_db import reset_demo_database, get_demo_db_url
 demo_url = get_demo_db_url()
 os.environ["DATABASE_URL"] = demo_url
 
+# Set simulated demo clock
+simulated_clock = os.getenv("FRESHNESS_REFERENCE_DATE", "2024-09-01T00:00:00+00:00")
+os.environ["FRESHNESS_REFERENCE_DATE"] = simulated_clock
+ref_dt = datetime.fromisoformat(simulated_clock.replace("Z", "+00:00"))
+
+# Prominent simulated clock banner (Review Item A1)
+print(f"\n{BOLD}{CYAN}{'='*78}")
+print("  [SIMULATED DEMO CLOCK, NOT TODAY'S DATE]")
+print(f"  Reference Date: {ref_dt.date().isoformat()} (simulated demo clock, not today's date)")
+print("  Document Dates & Freshness Buckets:")
+print("    - 2024 Leave Policy:         published 2024-06-01 (age: 92 days)   -> fresh")
+print("    - 2019 Leave Policy:         published 2019-03-01 (age: 2011 days) -> stale")
+print("    - Working Hours Handbook:    undated                               -> unknown")
+print(f"{'='*78}{RESET}\n")
+
 # Print mode banner
 if is_live:
     print(f"\n{BOLD}{GREEN}{'='*78}")
@@ -185,7 +200,7 @@ use_testclient = "--standalone" in sys.argv or not is_live
 if not use_testclient:
     try:
         import requests
-        r = requests.get(BASE + "/docs", timeout=1.0)
+        r = requests.get(BASE + "/", timeout=1.0)
         if not r.ok:
             use_testclient = True
     except Exception:
@@ -291,17 +306,16 @@ def run_demo():
     # STEP 2: Phase 3 Cleaning Workflow (Approve All including outlier flag via min_severity=info)
     step("Step 2: Clean CSV -> Produce Version 2 with Outlier Flags & Quarantined Rows")
     post(f"/sources/{src_csv_id}/roles/infer")
-    put(f"/sources/{src_csv_id}/roles", json={"roles": {"Employee_ID": "identifier", "Manager": "optional"}})
+    put(f"/sources/{src_csv_id}/roles", json={"roles": {"Employee_ID": "identifier", "Salary": "numeric", "Manager": "optional"}})
     post(f"/sources/{src_csv_id}/proposals/generate")
     # Review Issue 5: approve outlier flag proposal by setting min_severity=info
     post(f"/sources/{src_csv_id}/proposals/approve-all?min_severity=info")
     apply_res = post(f"/sources/{src_csv_id}/apply")
     ok(f"Applied proposals -> Version 2 ready (Active: {apply_res['rows_active']}, Quarantined: {apply_res['rows_quarantined']})")
 
-    # Document Overrides (Relative Dates: Today - 120 days for Current, 2019-03-01 for Archived)
+    # Document Overrides: True published dates (2019: 2019-03-01, 2024: 2024-06-01)
     step("Step 3: Document Overrides & Freshness Buckets")
-    now_utc = datetime.now(timezone.utc)
-    current_policy_date = (now_utc - timedelta(days=120)).date().isoformat() + "T00:00:00"
+    current_policy_date = "2024-06-01T00:00:00"
     archived_policy_date = "2019-03-01T00:00:00"
 
     docs_2019 = get(f"/sources/{src_2019_id}/documents")
@@ -326,9 +340,13 @@ def run_demo():
     chunks_2024 = get(f"/index-runs/{idx_2024['id']}/chunks")
     meta_2024 = chunks_2024["chunks"][0]["metadata"]
 
-    print("\nDocument Freshness Buckets:")
-    ok(f"  Document '2019 Leave Policy (Archived)' (ID {doc_2019_id}) -> published_at={meta_2019.get('published_at')}, freshness bucket={BOLD}{meta_2019.get('freshness')}{RESET}")
-    ok(f"  Document '2024 Leave Policy (Revised)' (ID {doc_2024_id}) -> published_at={meta_2024.get('published_at')}, freshness bucket={BOLD}{meta_2024.get('freshness')}{RESET}")
+    print("\nDocument Freshness Buckets (Simulated Clock: 2024-09-01):")
+    pub_2019 = meta_2019.get("published_at")
+    age_2019 = (ref_dt.date() - datetime.fromisoformat(pub_2019).date()).days if pub_2019 else None
+    pub_2024 = meta_2024.get("published_at")
+    age_2024 = (ref_dt.date() - datetime.fromisoformat(pub_2024).date()).days if pub_2024 else None
+    ok(f"  Document '2019 Leave Policy (Archived)' (ID {doc_2019_id}) -> published_at={pub_2019}, age={age_2019} days, freshness bucket={BOLD}{meta_2019.get('freshness')}{RESET}")
+    ok(f"  Document '2024 Leave Policy (Revised)' (ID {doc_2024_id}) -> published_at={pub_2024}, age={age_2024} days, freshness bucket={BOLD}{meta_2024.get('freshness')}{RESET}")
 
     all_source_ids = [src_2019_id, src_2024_id, src_hours_id, src_csv_id]
 

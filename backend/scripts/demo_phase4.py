@@ -77,7 +77,7 @@ BASE = "http://127.0.0.1:8000"
 if not use_testclient:
     try:
         import requests
-        r = requests.get(BASE + "/docs", timeout=1.0)
+        r = requests.get(BASE + "/", timeout=1.0)
         if not r.ok:
             use_testclient = True
     except Exception:

@@ -51,3 +51,14 @@ backend/uploads/*
 .idea/
 .DS_Store
 Thumbs.db
+
+# Node & Next.js frontend
+node_modules/
+.next/
+frontend/.next/
+frontend/node_modules/
+.env.local
+frontend/.env.local
+
+#folders
+/project_audit

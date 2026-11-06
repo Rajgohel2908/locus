@@ -16,6 +16,7 @@ Sift uses a **hybrid migration strategy**: SQLAlchemy ORM `create_all` for Phase
 | `004_phase4.sql` | Phase 4 | `index_runs`, `chunks`, `queries`, `retrieval_results` |
 | `005_phase5.sql` | Phase 5 | `document_overrides`, `queries.strategy`, `queries.filters`, `retrieval_results.signals` |
 | `006_phase6.sql` | Phase 6 | `queries.route`, `queries.route_info`, `queries.answer_type` |
+| `007_phase6b.sql` | Phase 6B | `recommendations`, `pipeline_configs`, `queries.pipeline_config_id` |
 
 ---
 
@@ -27,8 +28,8 @@ Sift uses a **hybrid migration strategy**: SQLAlchemy ORM `create_all` for Phase
 # Phase 1: ORM create_all (idempotent)
 Base.metadata.create_all(bind=engine)
 
-# Phase 2-6: SQL files applied in order
-for fname in ("002_phase2.sql", "003_phase3.sql", "004_phase4.sql", "005_phase5.sql", "006_phase6.sql"):
+# Phase 2-6B: SQL files applied in order
+for fname in ("002_phase2.sql", "003_phase3.sql", "004_phase4.sql", "005_phase5.sql", "006_phase6.sql", "007_phase6b.sql"):
     migration_path = Path(__file__).parent / "migrations" / fname
     ...
 ```

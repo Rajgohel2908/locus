@@ -41,6 +41,22 @@ from db import init_db, SessionLocal, Document, Source, IndexRun, Chunk
 from scripts.reset_demo_db import reset_demo_database, get_demo_db_url
 demo_url = get_demo_db_url()
 os.environ["DATABASE_URL"] = demo_url
+
+# Set simulated demo clock
+simulated_clock = os.getenv("FRESHNESS_REFERENCE_DATE", "2024-09-01T00:00:00+00:00")
+os.environ["FRESHNESS_REFERENCE_DATE"] = simulated_clock
+ref_dt = datetime.fromisoformat(simulated_clock.replace("Z", "+00:00"))
+
+# Prominent simulated clock banner (Review Item A1)
+print(f"\n{BOLD}{CYAN}{'='*75}")
+print("  [SIMULATED DEMO CLOCK, NOT TODAY'S DATE]")
+print(f"  Reference Date: {ref_dt.date().isoformat()} (simulated demo clock, not today's date)")
+print("  Document Dates & Freshness Buckets:")
+print("    - 2024 Leave Policy:         published 2024-06-01 (age: 92 days)   -> fresh")
+print("    - 2019 Leave Policy:         published 2019-03-01 (age: 2011 days) -> stale")
+print("    - Working Hours Handbook:    undated                               -> unknown")
+print(f"{'='*75}{RESET}\n")
+
 reset_demo_database(demo_url)
 
 RESET   = "\033[0m"
@@ -80,7 +96,7 @@ BASE = "http://127.0.0.1:8000"
 if not use_testclient:
     try:
         import requests
-        r = requests.get(BASE + "/docs", timeout=1.0)
+        r = requests.get(BASE + "/", timeout=1.0)
         if not r.ok:
             use_testclient = True
     except Exception:
@@ -175,19 +191,18 @@ def run_demo():
     # ─────────────────────────────────────────────────────────────────────────
     step("Step 2: Clean CSV -> Produce Version 2 with Quarantined Rows")
     post(f"/sources/{src_csv_id}/roles/infer")
-    put(f"/sources/{src_csv_id}/roles", json={"roles": {"Employee_ID": "identifier", "Manager": "optional"}})
+    put(f"/sources/{src_csv_id}/roles", json={"roles": {"Employee_ID": "identifier", "Salary": "numeric", "Manager": "optional"}})
     post(f"/sources/{src_csv_id}/proposals/generate")
     post(f"/sources/{src_csv_id}/proposals/approve-all?min_severity=info")
     apply_res = post(f"/sources/{src_csv_id}/apply")
     ok(f"Applied proposals -> Version 2 ready (Active: {apply_res['rows_active']}, Quarantined: {apply_res['rows_quarantined']})")
 
     # ─────────────────────────────────────────────────────────────────────────
-    # STEP 3: Set Document Overrides
+    # STEP 3: Set Document Overrides (True dates: 2019 -> 2019-03-01, 2024 -> 2024-06-01)
     # ─────────────────────────────────────────────────────────────────────────
-    step("Step 3: Set Metadata Overrides (2019 -> 2019-03-01, 2024 -> today - 120 days)")
+    step("Step 3: Set Metadata Overrides (2019 -> 2019-03-01, 2024 -> 2024-06-01)")
 
-    now_utc = datetime.now(timezone.utc)
-    current_policy_date = (now_utc - timedelta(days=120)).date().isoformat() + "T00:00:00"
+    current_policy_date = "2024-06-01T00:00:00"
     archived_policy_date = "2019-03-01T00:00:00"
 
     docs_2019 = get(f"/sources/{src_2019_id}/documents")
@@ -229,10 +244,12 @@ def run_demo():
     all_source_ids = [src_2019_id, src_2024_id, src_hours_id, src_csv_id]
 
     # Print each document's freshness bucket
-    print("\nDocument Freshness Buckets:")
+    print("\nDocument Freshness Buckets (Simulated Clock: 2024-09-01):")
     for d_id, d_label in [(doc_2019_id, "2019 Leave Policy (Archived)"), (doc_2024_id, "2024 Leave Policy (Revised)")]:
         d_info = get(f"/documents/{d_id}")
-        ok(f"  Document '{d_label}' (ID {d_id}) -> published_at={d_info.get('published_at')}, freshness bucket={BOLD}{d_info.get('freshness')}{RESET}")
+        pub = d_info.get("published_at")
+        age_d = (ref_dt.date() - datetime.fromisoformat(pub).date()).days if pub else None
+        ok(f"  Document '{d_label}' (ID {d_id}) -> published_at={pub}, age={age_d} days, freshness bucket={BOLD}{d_info.get('freshness')}{RESET}")
 
     # Verify chunk metadata reflects overrides
     chunks_preview_2019 = get(f"/index-runs/{idx_2019['id']}/chunks")

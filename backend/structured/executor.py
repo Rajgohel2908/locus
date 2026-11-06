@@ -118,7 +118,8 @@ def _evaluate_outliers(
         else:
             clean_str = f"{excluding_val:,}"
 
-        outlier_notes.append(f"Excluding {outliers_count} outlier values: {clean_str}")
+        prefix = "Average" if op == "avg" else "Total"
+        outlier_notes.append(f"{prefix} without {outliers_count} potential outlier(s): {clean_str}")
 
     return {
         "has_outliers": (outliers_count > 0),

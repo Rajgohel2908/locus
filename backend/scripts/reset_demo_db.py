@@ -14,12 +14,20 @@ import urllib.parse
 from pathlib import Path
 import psycopg2
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+from dotenv import load_dotenv
+
+# Load backend/.env
+_env_path = Path(__file__).resolve().parent.parent / ".env"
+if _env_path.exists():
+    load_dotenv(dotenv_path=_env_path)
+else:
+    load_dotenv()
 
 
 def get_demo_db_url() -> str:
     demo_url = os.getenv("DEMO_DATABASE_URL")
     if not demo_url:
-        dev_url = os.getenv("DATABASE_URL", "postgresql+psycopg2://postgres:raj1818@localhost:8887/ragstudio")
+        dev_url = os.getenv("DATABASE_URL", "postgresql+psycopg2://postgres@localhost:8887/ragstudio")
         parsed = urllib.parse.urlparse(dev_url)
         demo_url = urllib.parse.urlunparse(parsed._replace(path="/ragstudio_demo"))
     return demo_url
@@ -134,7 +142,7 @@ def reset_demo_database(demo_url: str = None) -> str:
     demo_cur = demo_conn.cursor()
 
     migrations_dir = backend_dir / "migrations"
-    migration_files = ["002_phase2.sql", "003_phase3.sql", "004_phase4.sql", "005_phase5.sql", "006_phase6.sql"]
+    migration_files = ["002_phase2.sql", "003_phase3.sql", "004_phase4.sql", "005_phase5.sql", "006_phase6.sql", "007_phase6b.sql"]
 
     for fname in migration_files:
         mpath = migrations_dir / fname

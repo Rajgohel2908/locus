@@ -27,25 +27,23 @@ class IndexRequest(BaseModel):
     chunk_overlap: Optional[int] = None
 
 
-@router.post("/sources/{source_id}/index", summary="Index active content for a source version")
-def create_index_run(
+def perform_indexing(
+    db: Session,
     source_id: int,
-    req: IndexRequest,
-    db: Session = Depends(get_db),
-):
+    version: Optional[int] = None,
+    chunk_size: Optional[int] = None,
+    chunk_overlap: Optional[int] = None,
+) -> IndexRun:
     """
-    Index active documents and structured records for a source into pgvector.
-    - Only content with status='active' is chunked and embedded.
-    - Re-indexing creates a new index run (older runs are preserved for comparison).
-    - Fails fast if the embedding model dimension does not match the database column.
+    Perform indexing of active content for a source version into pgvector.
+    Reusable by both the indexing router and the Phase 6B recommender apply logic.
     """
     source = db.query(Source).filter(Source.id == source_id).first()
     if not source:
         raise HTTPException(status_code=404, detail=f"Source {source_id} not found.")
 
-    # Determine version: user-specified or latest available version
-    if req.version is not None:
-        target_version = req.version
+    if version is not None:
+        target_version = version
     else:
         latest_ver = (
             db.query(func.max(SourceVersion.version_no))
@@ -54,11 +52,10 @@ def create_index_run(
         )
         target_version = latest_ver if latest_ver is not None else 1
 
-    chunk_size = req.chunk_size if req.chunk_size is not None else config.CHUNK_SIZE
-    chunk_overlap = req.chunk_overlap if req.chunk_overlap is not None else config.CHUNK_OVERLAP
+    c_size = chunk_size if chunk_size is not None else config.CHUNK_SIZE
+    c_overlap = chunk_overlap if chunk_overlap is not None else config.CHUNK_OVERLAP
 
     embedder = get_embedder()
-    # Dimension mismatch check fails fast with clear error
     config.validate_embed_dim(embedder.dimension)
 
     # 1. Create index_runs row in 'running' status
@@ -67,8 +64,8 @@ def create_index_run(
         source_version=target_version,
         embed_model=config.EMBED_MODEL,
         embed_dim=embedder.dimension,
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
+        chunk_size=c_size,
+        chunk_overlap=c_overlap,
         chunk_count=0,
         status="running",
         error=None,
@@ -117,8 +114,8 @@ def create_index_run(
             source_version=target_version,
             documents=docs,
             records=recs,
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
+            chunk_size=c_size,
+            chunk_overlap=c_overlap,
             overrides=overrides_map,
         )
 
@@ -148,31 +145,51 @@ def create_index_run(
         run.finished_at = datetime.utcnow()
         db.commit()
         db.refresh(run)
-
-        return {
-            "id": run.id,
-            "source_id": run.source_id,
-            "source_version": run.source_version,
-            "embed_model": run.embed_model,
-            "embed_dim": run.embed_dim,
-            "chunk_size": run.chunk_size,
-            "chunk_overlap": run.chunk_overlap,
-            "chunk_count": run.chunk_count,
-            "status": run.status,
-            "error": run.error,
-            "created_at": str(run.created_at),
-            "finished_at": str(run.finished_at) if run.finished_at else None,
-        }
+        return run
 
     except Exception as e:
         db.rollback()
-        # Clean up any partial chunks for this failed run
         db.query(Chunk).filter(Chunk.index_run_id == run.id).delete()
         run.status = "failed"
         run.error = str(e)
         run.finished_at = datetime.utcnow()
         db.commit()
-        raise HTTPException(status_code=500, detail=f"Indexing failed: {e}")
+        raise
+
+
+@router.post("/sources/{source_id}/index", summary="Index active content for a source version")
+def create_index_run(
+    source_id: int,
+    req: IndexRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Index active documents and structured records for a source into pgvector.
+    - Only content with status='active' is chunked and embedded.
+    - Re-indexing creates a new index run (older runs are preserved for comparison).
+    - Fails fast if the embedding model dimension does not match the database column.
+    """
+    run = perform_indexing(
+        db=db,
+        source_id=source_id,
+        version=req.version,
+        chunk_size=req.chunk_size,
+        chunk_overlap=req.chunk_overlap,
+    )
+    return {
+        "id": run.id,
+        "source_id": run.source_id,
+        "source_version": run.source_version,
+        "embed_model": run.embed_model,
+        "embed_dim": run.embed_dim,
+        "chunk_size": run.chunk_size,
+        "chunk_overlap": run.chunk_overlap,
+        "chunk_count": run.chunk_count,
+        "status": run.status,
+        "error": run.error,
+        "created_at": str(run.created_at),
+        "finished_at": str(run.finished_at) if run.finished_at else None,
+    }
 
 
 @router.get("/sources/{source_id}/index-runs", summary="List all index runs for a source")

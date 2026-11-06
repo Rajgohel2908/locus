@@ -29,6 +29,19 @@ A FastAPI + PostgreSQL (pgvector) backend that ingests files and websites, runs 
 
 ---
 
+## Live Embedded Widget Performance Invariant
+
+> [!IMPORTANT]
+> **Runtime Rule for Client Embedded Widgets (`POST /v1/chat`):**
+> Strategy comparison (`/retrieve/compare`) and CPU Cross-Encoder neural reranking are **offline studio/benchmark tools only**.
+> At runtime on a live client website:
+> 1. Use **Server-Sent Events (SSE) token streaming** so the Time-To-First-Token is under 350ms.
+> 2. Use **fast Dense HNSW search (15ms)** or lightweight BM25 hybrid; omit the CPU Cross-Encoder to prevent a 500ms CPU bottleneck on consumer hardware.
+> 3. Enforce **Semantic Caching** for high-frequency queries (>96% similarity hits in 20ms).
+> 4. Restrict context injection to the **top 2–3 chunks** to minimize LLM prefill latency.
+
+---
+
 ## Prerequisites
 
 | Requirement | Notes |
@@ -267,13 +280,13 @@ Copy `.env.example` to `.env` or set environment variables:
 
 ```ini
 # Database connection
-DATABASE_URL=postgresql+psycopg2://user:password@localhost:5432/sift
+DATABASE_URL=postgresql+psycopg2://<user>:<password>@localhost:5432/sift
 
 # Embedding Configuration
 EMBED_MODEL=sentence-transformers/all-MiniLM-L6-v2
 # (Column dimension is 384; if model dim != 384, indexing fails fast requiring a migration)
 
-# Chunking defaults
+# Chunking defaults (measured in characters)
 CHUNK_SIZE=800
 CHUNK_OVERLAP=120
 
@@ -295,19 +308,23 @@ GEMINI_API_KEY=your_gemini_api_key_here
 GEMINI_MODEL=gemini-2.5-flash
 LLM_TIMEOUT=30
 
-# Model Warm-up (Phase 6A)
+# Model Warm-up & Offline Cache (Phase 6A / 6A.3)
 WARMUP_MODELS=1
 # (Set to 1 to load embedder and cross-encoder models into memory during server startup)
+HF_HUB_OFFLINE=1
+TRANSFORMERS_OFFLINE=1
+# (Set to 1 to run Hugging Face sentence-transformers fully offline once cached, avoiding network retry delays)
 
 # Database Isolation (Phase 6A)
-TEST_DATABASE_URL=postgresql+psycopg2://postgres:your_password@localhost:8887/ragstudio_test
-DEMO_DATABASE_URL=postgresql+psycopg2://postgres:your_password@localhost:8887/ragstudio_demo
+TEST_DATABASE_URL=postgresql+psycopg2://<user>:<password>@localhost:8887/ragstudio_test
+DEMO_DATABASE_URL=postgresql+psycopg2://<user>:<password>@localhost:8887/ragstudio_demo
 # Safety rule: Pytest strictly enforces TEST_DATABASE_URL ending with '_test'.
 # reset_demo_db.py strictly enforces DEMO_DATABASE_URL ending with '_demo'.
 
-# Test-Only Calibration Parameters
-# FRESHNESS_REFERENCE_DATE: Test-only setting to freeze reference time for deterministic
-# unit tests. Demos and production run dynamically relative to current UTC time and never need this.
+# Simulated Demo Clock & Test Calibration
+# FRESHNESS_REFERENCE_DATE: Simulated reference date for demos (default 2024-09-01) and deterministic
+# unit tests. Allows sample documents to retain their true published dates (2019 policy: 2019-03-01,
+# 2024 policy: 2024-06-01) rather than faking relative dates. Production never sets this variable.
 ```
 
 ---
@@ -795,6 +812,137 @@ curl http://localhost:8000/queries/10/trace
 ```
 
 Response returns unified trace including route decisions, SQL-level descriptions with bound placeholders, rows considered/used/excluded, and data quality notes.
+
+---
+
+---
+
+## What's New in Phase 6B (Strategy Recommender & Pipeline Graphs)
+
+| Feature | Details |
+|---|---|
+| **Knowledge Base Profile** | `POST /kb-profile` extracts non-destructive, read-only corpus statistics: document/record/chunk counts, average words, freshness distributions, structured column roles, script distribution, and quality health. |
+| **Strategy Recommender** | `POST /recommendations` evaluates deterministic rules **R1–R12** (`recommender-rules-v1`) based on corpus profile and goal (`qa`, `comparison`, `extraction`, `search`). Thresholds serve as baseline priors (to be empirically validated in Phase 7). |
+| **Recommendation Lifecycle** | State machine: `proposed` &rarr; `approved` &rarr; `applied` (or `rejected`). Transitions are validated and idempotent. |
+| **Dual Pipeline Configurations** | Applying creates both a `Phase 4 Baseline` config (800/120, dense, no reranker, router/structured path disabled) and a `Recommended` config. Both link their own immutable index runs. |
+| **Pipeline Architecture Graphs** | `GET /pipeline-configs/{id}/graph` renders the 14-node architecture DAG as JSON or deterministic Mermaid (`flowchart TD`) with distinct styling for disabled and planned nodes. |
+| **Config-Aware Querying** | `POST /query` accepts `pipeline_config_id`. Baseline config enforces plain dense execution without router or structured redirection; recommended config activates hybrid/rerank and structured execution. |
+| **Field-by-Field Diff** | `GET /pipeline-configs/compare?a={id}&b={id}` returns structured differences with rule attribution. |
+
+---
+
+## Strategy Recommender Rules (recommender-rules-v1)
+
+> **Important**: All threshold values below are **prior heuristics**, not ground truth. They will be quantitatively benchmarked against RAGAS / Ground-Truth evaluation metrics in Phase 7. All chunk size and overlap values are in **characters**.
+
+| Rule ID | Rule Name | Condition / Prior Threshold | Recommendation Effect |
+|---|---|---|---|
+| **R1** | `structured_present` | Structured source with &ge; 1 numeric column & &ge; 10 active rows | `structured_route_enabled = True` |
+| **R2** | `identifier_present` | Identifier column in a structured source | `strategy_default = "hybrid"` |
+| **R3** | `tiny_corpus` | Total corpus chunks &lt; 30 | `strategy_default = "dense"`, `use_rerank = False` |
+| **R4** | `default_text` | Otherwise (chunks &ge; 30) | `strategy_default = "hybrid"` |
+| **R5** | `rerank_policy` | Goal in `("qa", "comparison")` and corpus chunks &ge; 50 | `use_rerank = True` |
+| **R6** | `chunk_sizing` | Avg words &lt; 300 &rarr; 500/75; 300–1500 &rarr; 800/120; &gt; 1500 &rarr; 1000/150 (in characters) | Sets `chunk_size`, `chunk_overlap`, `chunk_unit = "characters"` |
+| **R7** | `stale_content` | Stale share &ge; 20% of dated chunks | Warning + `suggested_filters.freshness = ["fresh", "aging", "unknown"]` (never applied) |
+| **R8** | `undated_documents` | &ge; 50% undated documents | Warning to set dates via overrides |
+| **R9** | `ocr_quality` | OCR share &ge; 30% or mean confidence &lt; 70 | `filters_default.min_extraction_confidence = 60` plus warning |
+| **R10** | `non_latin_script` | Non-Latin share &ge; 20% of characters | Warning only suggesting evaluating multilingual model (never switches models) |
+| **R11** | `uncleaned_data` | Latest version 1 with duplicates or pending critical proposals | Warning that recommendation rests on uncleaned data |
+| **R12** | `goal_adjustments` | Goal-specific adjustments: `search` &rarr; top_k=10, use_rerank=False; `comparison` &rarr; top_k=8; `analysis` &rarr; structured emphasized, warning if no structured source; `qa` &rarr; top_k=5 | Adjusts `top_k`, `use_rerank` |
+
+---
+
+## Offline Models & Simulated Clock Configuration
+
+### Offline Transformer Operation
+To avoid network overhead or Hugging Face Hub latency after initial download:
+```bash
+# In backend/.env:
+HF_HUB_OFFLINE=1
+TRANSFORMERS_OFFLINE=1
+```
+*Note: The first startup downloads SentenceTransformer and Cross-Encoder weights into local cache (`~/.cache/huggingface`). Subsequent runs operate completely offline when these flags are enabled.*
+
+### Simulated Demo Clock
+The environment variable `FRESHNESS_REFERENCE_DATE` enables deterministic time travel for demo scripts and test suites without modifying document timestamps on disk:
+```bash
+# Demos/Tests only (default 2024-09-01T00:00:00+00:00)
+FRESHNESS_REFERENCE_DATE="2024-09-01T00:00:00+00:00"
+```
+*Production environments leave `FRESHNESS_REFERENCE_DATE` unset, defaulting to real-time `datetime.now(timezone.utc)`.*
+
+---
+
+## Phase 6B API Usage Examples (curl)
+
+### 1 — Extract Knowledge Base Profile (POST /kb-profile)
+
+```bash
+curl -X POST http://localhost:8000/kb-profile \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source_ids": [1, 2, 3, 4]
+  }'
+```
+
+---
+
+### 2 — Generate Strategy Recommendation (POST /recommendations)
+
+```bash
+curl -X POST http://localhost:8000/recommendations \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source_ids": [1, 2, 3, 4],
+    "goal": "qa"
+  }'
+```
+
+---
+
+### 3 — Apply Recommendation with Background Indexing (POST /recommendations/{id}/apply)
+
+```bash
+# Approves recommendation first
+curl -X POST http://localhost:8000/recommendations/1/approve
+
+# Applies recommendation and indexes chunks for both configs
+curl -X POST http://localhost:8000/recommendations/1/apply \
+  -H "Content-Type: application/json" \
+  -d '{
+    "build_index": true
+  }'
+```
+
+---
+
+### 4 — Export Pipeline Architecture Graph in Mermaid Format (GET /pipeline-configs/{id}/graph)
+
+```bash
+curl http://localhost:8000/pipeline-configs/2/graph?format=mermaid
+```
+
+Returns valid `flowchart TD` text ready to paste directly into GitHub markdown or Mermaid Live Editor:
+```mermaid
+flowchart TD
+    classDef default fill:#f8f9fa,stroke:#333,stroke-width:1.5px,color:#212529;
+    classDef disabled fill:#f1f3f5,stroke:#adb5bd,stroke-width:1.5px,stroke-dasharray: 4 4,color:#868e96;
+    classDef planned fill:#fff3bf,stroke:#fab005,stroke-width:1.5px,stroke-dasharray: 4 4,color:#495057;
+    parser["Parser Engine"]
+    quality_profiler["Quality Profiler"]
+    cleaner["Cleaning Engine (Approved Proposals: 4)"]
+    chunker["Chunker (500/75)"]
+    embedder["Embedder (sentence-transformers/all-MiniLM-L6-v2)"]
+    vector_store["Vector Store (pgvector HNSW)"]
+    router["Query Router (Enabled)"]
+    structured_executor["Structured Executor (Enabled)"]
+    retriever["Retriever (hybrid, top_k=5)"]
+    reranker["Cross-Encoder Reranker (Enabled)"]
+    guardrails["Evidence Gate & Guardrails"]
+    llm["LLM Generator (gemini:gemini-1.5-flash)"]
+    evaluator["RAG Evaluator (Phase 7 Planned)"]
+    class evaluator planned;
+```
 
 ---
 

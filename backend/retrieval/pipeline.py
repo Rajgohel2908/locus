@@ -156,6 +156,7 @@ def execute_pipeline(
     embedder: Optional[Embedder] = None,
     lexical_retriever: Optional[LexicalRetriever] = None,
     reranker: Optional[Reranker] = None,
+    index_run_ids: Optional[List[int]] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any], Dict[str, float], List[int]]:
     """
     Execute end-to-end multi-strategy retrieval pipeline.
@@ -183,7 +184,11 @@ def execute_pipeline(
     }
 
     # 1. Resolve index runs
-    run_ids = resolve_index_run_ids(db, source_ids=source_ids, index_run_id=index_run_id)
+    from db import IndexRun
+    if index_run_ids is not None:
+        run_ids = [rid for rid in index_run_ids if db.query(IndexRun).filter(IndexRun.id == rid).first()]
+    else:
+        run_ids = resolve_index_run_ids(db, source_ids=source_ids, index_run_id=index_run_id)
     if not run_ids:
         evidence = {
             "passed": False,
@@ -197,7 +202,7 @@ def execute_pipeline(
     # 2. Stage 1: Metadata Filtering
     t0 = time.perf_counter()
     allowed_chunk_ids = resolve_allowed_chunk_ids(db, run_ids=run_ids, filters=filters)
-    latency_ms["filter"] = round((time.perf_counter() - t0) * 1000, 2)
+    latency_ms["filter"] = max(round((time.perf_counter() - t0) * 1000, 2), 0.01)
 
     # Fast-fail if filters active but 0 chunks matched
     if allowed_chunk_ids is not None and len(allowed_chunk_ids) == 0:
@@ -282,7 +287,7 @@ def execute_pipeline(
             embedder=embedder,
             allowed_chunk_ids=allowed_chunk_ids,
         )
-        latency_ms["dense"] = round((time.perf_counter() - t0) * 1000, 2)
+        latency_ms["dense"] = max(round((time.perf_counter() - t0) * 1000, 2), 0.01)
 
         # Lexical top N
         t0 = time.perf_counter()
@@ -294,7 +299,7 @@ def execute_pipeline(
             top_k=n,
             allowed_chunk_ids=allowed_chunk_ids,
         )
-        latency_ms["lexical"] = round((time.perf_counter() - t0) * 1000, 2)
+        latency_ms["lexical"] = max(round((time.perf_counter() - t0) * 1000, 2), 0.01)
 
         dense_map = {c["chunk_id"]: c for c in dense_results}
         lex_map = {c["chunk_id"]: c for c in lex_results}
@@ -302,7 +307,7 @@ def execute_pipeline(
         # Reciprocal Rank Fusion
         t0 = time.perf_counter()
         fused = reciprocal_rank_fusion([dense_results, lex_results], k=config.RRF_K)
-        latency_ms["fuse"] = round((time.perf_counter() - t0) * 1000, 2)
+        latency_ms["fuse"] = max(round((time.perf_counter() - t0) * 1000, 2), 0.01)
 
         if strategy == "hybrid":
             for rank, item in enumerate(fused[:k], start=1):
@@ -331,7 +336,7 @@ def execute_pipeline(
             t0 = time.perf_counter()
             rerank_engine = reranker or get_reranker()
             reranked = rerank_engine.rerank(query=question, chunks=top_candidates_for_rerank)
-            latency_ms["rerank"] = round((time.perf_counter() - t0) * 1000, 2)
+            latency_ms["rerank"] = max(round((time.perf_counter() - t0) * 1000, 2), 0.01)
 
             for rank, item in enumerate(reranked[:k], start=1):
                 cid = item["chunk_id"]

@@ -15,6 +15,12 @@ if env_path.exists():
 else:
     load_dotenv()
 
+# Support offline mode through .env once models are cached
+if os.getenv("HF_HUB_OFFLINE", "0").strip().lower() in ("1", "true", "yes"):
+    os.environ["HF_HUB_OFFLINE"] = "1"
+if os.getenv("TRANSFORMERS_OFFLINE", "0").strip().lower() in ("1", "true", "yes"):
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
 # Embedding configuration
 EMBED_MODEL: str = os.getenv("EMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 # Column dimension fixed in chunks schema migration (384 for all-MiniLM-L6-v2)

@@ -38,13 +38,15 @@ class QueryRequest(BaseModel):
     top_k: Optional[int] = None
     min_score: Optional[float] = None
     # Phase 5 additions
-    strategy: Optional[str] = "dense"
+    strategy: Optional[str] = None
     filters: Optional[RetrievalFilters] = None
     candidates_n: Optional[int] = None
     min_bm25: Optional[float] = None
     min_rerank: Optional[float] = None
     # Phase 6 additions
     version: Optional[int] = None
+    # Phase 6B additions
+    pipeline_config_id: Optional[int] = None
 
 
 @router.post("/route", summary="Analyze query and return deterministic routing decision")
@@ -103,10 +105,14 @@ def query_endpoint(
     """
     if not req.question or not req.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
-    if not req.source_ids and req.index_run_id is None:
-        raise HTTPException(status_code=400, detail="Must provide at least one source_id or index_run_id.")
+    if not req.source_ids and req.index_run_id is None and req.pipeline_config_id is None:
+        raise HTTPException(status_code=400, detail="Must provide at least one source_id, index_run_id, or pipeline_config_id.")
 
-    strategy = req.strategy or "dense"
+    if req.pipeline_config_id is not None:
+        strategy = req.strategy or "auto"
+    else:
+        strategy = req.strategy or "dense"
+
     valid_strategies = ("dense", "lexical", "hybrid", "hybrid_rerank", "auto")
     if strategy not in valid_strategies:
         raise HTTPException(
@@ -127,6 +133,7 @@ def query_endpoint(
         min_bm25=req.min_bm25,
         min_rerank=req.min_rerank,
         version=req.version,
+        pipeline_config_id=req.pipeline_config_id,
     )
     return result
 
@@ -328,6 +335,18 @@ def get_query_trace(
         trace["citations_valid"] = [c for c in candidate_items if c["cited"]]
         trace["citations_dropped"] = [c for c in candidate_items if not c["cited"]]
 
+    if getattr(q, "pipeline_config_id", None) is not None:
+        from db import PipelineConfig
+        cfg = db.query(PipelineConfig).filter(PipelineConfig.id == q.pipeline_config_id).first()
+        trace["pipeline_config_id"] = q.pipeline_config_id
+        if cfg:
+            trace["pipeline_config"] = {
+                "id": cfg.id,
+                "name": cfg.name,
+                "kind": cfg.kind,
+                "spec": cfg.spec,
+            }
+
     return trace
 
 
@@ -367,6 +386,7 @@ def get_query_details(
         "question": q.question,
         "source_ids": q.source_ids,
         "index_run_ids": q.index_run_ids,
+        "pipeline_config_id": getattr(q, "pipeline_config_id", None),
         "top_k": q.top_k,
         "min_score": q.min_score,
         "strategy": getattr(q, "strategy", "dense"),
@@ -401,6 +421,7 @@ def list_queries(
             "question": q.question,
             "source_ids": q.source_ids,
             "index_run_ids": q.index_run_ids,
+            "pipeline_config_id": getattr(q, "pipeline_config_id", None),
             "top_k": q.top_k,
             "min_score": q.min_score,
             "strategy": getattr(q, "strategy", "dense"),

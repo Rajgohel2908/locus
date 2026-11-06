@@ -354,3 +354,37 @@ class TestUnstructuredProposals:
         props = generate_unstructured_proposals(docs)
         # Clean documents should generate no proposals
         assert props == []
+
+
+@pytest.mark.pg
+def test_proposals_db_persistence_and_query_pg(pg_session):
+    """Verify proposals table persistence and status queries on PostgreSQL (_test DB)."""
+    from db import Source, CleaningProposal
+
+    s = Source(source_type="file", name="pg_prop_test")
+    pg_session.add(s)
+    pg_session.flush()
+
+    p1 = CleaningProposal(
+        source_id    = s.id,
+        base_version = 1,
+        kind         = "flag_outliers",
+        target       = "Salary",
+        severity     = "warning",
+        description  = "Salary outlier flag",
+        impact       = {"rows_affected": 1},
+        params       = {"column": "Salary", "lower": 0, "upper": 200000},
+        status       = "pending",
+    )
+    pg_session.add(p1)
+    pg_session.commit()
+
+    queried = (
+        pg_session.query(CleaningProposal)
+        .filter(CleaningProposal.source_id == s.id, CleaningProposal.status == "pending")
+        .first()
+    )
+    assert queried is not None
+    assert queried.kind == "flag_outliers"
+    assert queried.target == "Salary"
+    assert queried.params.get("upper") == 200000

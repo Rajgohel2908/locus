@@ -508,12 +508,12 @@ def test_outlier_honesty_independent_pandas_recomputation(test_db):
         assert pytest.approx(res_avg_v1["excluding_outliers_value"], 0.01) == pd_clean_mean
         assert res_avg_v1["outliers_count"] == 1
         assert any("1 potential outliers (IQR rule), not flagged" in n for n in res_avg_v1["data_quality_notes"])
-        assert any("Excluding 1 outlier values: 72,265.75" in n for n in res_avg_v1["data_quality_notes"])
+        assert any("Average without 1 potential outlier(s): 72,265.75" in n for n in res_avg_v1["data_quality_notes"])
 
         rendered_avg_v1 = render_answer(res_avg_v1)
         assert "Average Salary where City = Mumbai" in rendered_avg_v1
         assert "235,015.48" in rendered_avg_v1
-        assert "Excluding 1 outlier values: 72,265.75" in rendered_avg_v1
+        assert "Average without 1 potential outlier(s): 72,265.75" in rendered_avg_v1
         assert "- 1 potential outliers (IQR rule), not flagged" in rendered_avg_v1
 
         # 2. Sum Salary in Mumbai
@@ -521,7 +521,7 @@ def test_outlier_honesty_independent_pandas_recomputation(test_db):
         assert pytest.approx(res_sum_v1["result_value"], 0.01) == pd_mumbai_sum
         assert pytest.approx(res_sum_v1["excluding_outliers_value"], 0.01) == pd_clean_sum
         rendered_sum_v1 = render_answer(res_sum_v1)
-        assert "Excluding 1 outlier values: 4,335,945.01" in rendered_sum_v1
+        assert "Total without 1 potential outlier(s): 4,335,945.01" in rendered_sum_v1
 
         # 3. Top 1 Highest Salary in Mumbai
         res_top_v1 = execute_aggregation(test_db, schema_v1, op="max", column="Salary", filters=[("City", "Mumbai")], template="top_n", top_n=1, version=1)
@@ -537,12 +537,12 @@ def test_outlier_honesty_independent_pandas_recomputation(test_db):
         assert pytest.approx(res_avg_v2["excluding_outliers_value"], 0.01) == pd_clean_mean
         assert res_avg_v2["outliers_count"] == 1
         assert any("1 values in 'Salary' are flagged as outliers (included in result)" in n for n in res_avg_v2["data_quality_notes"])
-        assert any("Excluding 1 outlier values: 72,265.75" in n for n in res_avg_v2["data_quality_notes"])
+        assert any("Average without 1 potential outlier(s): 72,265.75" in n for n in res_avg_v2["data_quality_notes"])
 
         rendered_avg_v2 = render_answer(res_avg_v2)
         assert "Average Salary where City = Mumbai" in rendered_avg_v2
         assert "235,015.48" in rendered_avg_v2
-        assert "Excluding 1 outlier values: 72,265.75" in rendered_avg_v2
+        assert "Average without 1 potential outlier(s): 72,265.75" in rendered_avg_v2
         assert "- 1 values in 'Salary' are flagged as outliers (included in result)" in rendered_avg_v2
 
         # Top 1 Highest Salary in Mumbai for V2

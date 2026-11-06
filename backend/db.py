@@ -302,6 +302,7 @@ class QueryRecord(Base):
     status         = Column(Text, nullable=False)  # answered | unverified | insufficient_evidence | llm_error
     answer         = Column(Text, nullable=True)
     latency_ms     = Column(JSONB, default=dict)
+    pipeline_config_id = Column(Integer, nullable=True)
     created_at     = Column(DateTime, default=datetime.utcnow)
 
 
@@ -338,6 +339,47 @@ class DocumentOverride(Base):
     set_at       = Column(DateTime, default=datetime.utcnow)
 
 
+# ── Phase 6B Table Models ─────────────────────────────────────────────────────
+
+class Recommendation(Base):
+    """
+    Rule-based strategy recommendation for a set of sources and goal.
+    Lifecycle: proposed -> approved -> applied (or proposed -> rejected).
+    """
+    __tablename__ = "recommendations"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    source_ids      = Column(IntArray, nullable=False)
+    goal            = Column(Text, nullable=False)
+    rules_version   = Column(Text, nullable=False)
+    data_profile    = Column(JSONB, nullable=False)
+    pipeline_spec   = Column(JSONB, nullable=False)
+    rules_fired     = Column(JSONB, nullable=False)
+    rules_not_fired = Column(JSONB, nullable=False)
+    warnings        = Column(JSONB, nullable=False)
+    status          = Column(Text, nullable=False, default="proposed")
+    created_at      = Column(DateTime, default=datetime.utcnow)
+    decided_at      = Column(DateTime, nullable=True)
+
+
+class PipelineConfig(Base):
+    """
+    Pipeline configuration (baseline or recommended) created from approved recommendation.
+    Index runs map source_id (as str) to index_run_id.
+    """
+    __tablename__ = "pipeline_configs"
+
+    id                = Column(Integer, primary_key=True, index=True)
+    name              = Column(Text, nullable=False)
+    kind              = Column(Text, nullable=False)  # baseline | recommended
+    source_ids        = Column(IntArray, nullable=False)
+    spec              = Column(JSONB, nullable=False)
+    spec_hash         = Column(Text, nullable=False)
+    recommendation_id = Column(Integer, ForeignKey("recommendations.id"), nullable=True)
+    index_runs        = Column(JSONB, nullable=False, default=dict)
+    created_at        = Column(DateTime, default=datetime.utcnow)
+
+
 # ── Init ──────────────────────────────────────────────────────────────────────
 
 def init_db():
@@ -349,6 +391,7 @@ def init_db():
     Phase 4: applies 004_phase4.sql for index_runs, chunks, queries, retrieval_results.
     Phase 5: applies 005_phase5.sql for document_overrides, query strategy/filters, signals.
     Phase 6: applies 006_phase6.sql for queries.route, queries.route_info, queries.answer_type.
+    Phase 6B: applies 007_phase6b.sql for recommendations, pipeline_configs, queries.pipeline_config_id.
     Safe to call multiple times — all statements use IF NOT EXISTS.
     """
     with engine.connect() as conn:
@@ -362,7 +405,7 @@ def init_db():
     Base.metadata.create_all(bind=engine)
 
     # Apply each SQL migration in order (all use IF NOT EXISTS / ON CONFLICT)
-    for fname in ("002_phase2.sql", "003_phase3.sql", "004_phase4.sql", "005_phase5.sql", "006_phase6.sql"):
+    for fname in ("002_phase2.sql", "003_phase3.sql", "004_phase4.sql", "005_phase5.sql", "006_phase6.sql", "007_phase6b.sql"):
         migration_path = Path(__file__).parent / "migrations" / fname
         if migration_path.exists():
             sql = migration_path.read_text(encoding="utf-8-sig")

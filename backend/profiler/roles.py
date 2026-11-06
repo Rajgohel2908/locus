@@ -69,10 +69,17 @@ def infer_roles(df: pd.DataFrame) -> Dict[str, str]:
             roles[col] = "date"
             continue
 
-        # ── 3. Numeric dtype? ───────────────────────────────────────────────
+        # ── 3. Numeric dtype or parseable numeric strings? ─────────────────
         if pd.api.types.is_numeric_dtype(series):
             roles[col] = "numeric"
             continue
+        non_empty = series.dropna().astype(str).str.strip()
+        non_empty = non_empty[non_empty != ""]
+        if len(non_empty) > 0:
+            num_coerced = pd.to_numeric(non_empty.str.replace(",", ""), errors="coerce")
+            if num_coerced.notna().sum() / len(non_empty) >= 0.8:
+                roles[col] = "numeric"
+                continue
 
         # ── 4. Text-based analysis ─────────────────────────────────────────
         text_series = series.dropna().astype(str)

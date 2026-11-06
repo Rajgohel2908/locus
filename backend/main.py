@@ -77,6 +77,9 @@ from routers.cleaning  import router as cleaning_router
 from routers.indexing  import router as indexing_router
 from routers.rag       import router as rag_router
 
+# Phase 6B router
+from routers.recommender import router as recommender_router
+
 # ── Constants ─────────────────────────────────────────────────────────────────
 MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB
 
@@ -95,11 +98,17 @@ ALLOWED_EXTENSIONS = {
 
 UPLOAD_DIR: Path = (Path(os.environ["UPLOAD_DIR"]).resolve() if os.environ.get("UPLOAD_DIR") else Path(__file__).resolve().parent / "uploads")
 
+# Support hiding /docs, /redoc, /openapi.json in production (default: disabled)
+ENABLE_DOCS = os.getenv("ENABLE_DOCS", "0").strip().lower() in ("1", "true", "yes")
+
 # ── App init ──────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="Sift — Phase 1-4 Baseline RAG",
     description="Data ingestion + quality profiling + content store + web crawler + cleaning workflow + baseline RAG",
     version="4.0.0",
+    docs_url="/docs" if ENABLE_DOCS else None,
+    redoc_url="/redoc" if ENABLE_DOCS else None,
+    openapi_url="/openapi.json" if ENABLE_DOCS else None,
 )
 
 # Register routers
@@ -109,12 +118,15 @@ app.include_router(documents_router)
 app.include_router(cleaning_router)   # Phase 3
 app.include_router(indexing_router)   # Phase 4
 app.include_router(rag_router)        # Phase 4
+app.include_router(recommender_router) # Phase 6B
 
 
 @app.get("/", include_in_schema=False)
 def root():
-    """Redirect root path to interactive Swagger documentation."""
-    return RedirectResponse(url="/docs")
+    """Root health and heartbeat endpoint."""
+    if ENABLE_DOCS:
+        return RedirectResponse(url="/docs")
+    return {"status": "online", "app": "Sift Platform", "version": "4.0.0"}
 
 
 
@@ -142,26 +154,75 @@ def startup():
     # Phase 3: ensure version 1 exists for any source without one
     _backfill_source_versions()
 
-    # Phase 6A: Model Warm-up (default WARMUP_MODELS=1)
+    # Phase 6A / 6A.3: Model Warm-up (default WARMUP_MODELS=1)
     warmup = os.getenv("WARMUP_MODELS", "1").strip().lower() in ("1", "true", "yes")
     if warmup:
         import time
-        logger.info("Warming up embedder and cross-encoder models...")
+        from huggingface_hub import try_to_load_from_cache
+
+        logger.info("[WARMUP] Starting model warm-up...")
+
+        # ── 1. Embedder Breakdown ─────────────────────────────────────────────
         t0 = time.perf_counter()
         from indexing.embedder import get_embedder
-        embedder = get_embedder()
-        embedder.embed_query("warmup probe")
-        t_embed = time.perf_counter() - t0
-        logger.info(f"[WARMUP] Embedder loaded and probed in {t_embed:.2f}s")
-        print(f"[WARMUP] Embedder loaded and probed in {t_embed:.2f}s")
+        t_import_embed = time.perf_counter() - t0
 
-        t1 = time.perf_counter()
+        embed_model_name = config.EMBED_MODEL
+        t0 = time.perf_counter()
+        cached_embed = try_to_load_from_cache(embed_model_name, "config.json")
+        t_resolve_embed = time.perf_counter() - t0
+        if not cached_embed:
+            print(f"[WARMUP] Embedder '{embed_model_name}' not cached; downloading from Hugging Face Hub once...")
+
+        t0 = time.perf_counter()
+        embedder = get_embedder()
+        embedder._ensure_loaded()
+        t_load_embed = time.perf_counter() - t0
+
+        t0 = time.perf_counter()
+        embedder.embed_query("warmup probe")
+        t_infer_embed = time.perf_counter() - t0
+
+        msg_embed = (
+            f"[WARMUP] Embedder ({embed_model_name}): "
+            f"import={t_import_embed:.3f}s | "
+            f"resolve/network={t_resolve_embed:.3f}s | "
+            f"weight_load={t_load_embed:.3f}s | "
+            f"first_inference={t_infer_embed:.3f}s"
+        )
+        logger.info(msg_embed)
+        print(msg_embed)
+
+        # ── 2. Cross-Encoder Breakdown ────────────────────────────────────────
+        t0 = time.perf_counter()
         from retrieval.rerank import get_reranker
+        t_import_rerank = time.perf_counter() - t0
+
+        rerank_model_name = config.RERANK_MODEL
+        t0 = time.perf_counter()
+        cached_rerank = try_to_load_from_cache(rerank_model_name, "config.json")
+        t_resolve_rerank = time.perf_counter() - t0
+        if not cached_rerank:
+            print(f"[WARMUP] Cross-encoder '{rerank_model_name}' not cached; downloading from Hugging Face Hub once...")
+
+        t0 = time.perf_counter()
         reranker = get_reranker()
+        reranker._get_model()
+        t_load_rerank = time.perf_counter() - t0
+
+        t0 = time.perf_counter()
         reranker.rerank("warmup query", [{"chunk_id": -1, "content": "warmup candidate chunk content", "score": 0.5}])
-        t_rerank = time.perf_counter() - t1
-        logger.info(f"[WARMUP] Cross-encoder loaded and probed in {t_rerank:.2f}s")
-        print(f"[WARMUP] Cross-encoder loaded and probed in {t_rerank:.2f}s")
+        t_infer_rerank = time.perf_counter() - t0
+
+        msg_rerank = (
+            f"[WARMUP] Cross-encoder ({rerank_model_name}): "
+            f"import={t_import_rerank:.3f}s | "
+            f"resolve/network={t_resolve_rerank:.3f}s | "
+            f"weight_load={t_load_rerank:.3f}s | "
+            f"first_inference={t_infer_rerank:.3f}s"
+        )
+        logger.info(msg_rerank)
+        print(msg_rerank)
 
     print("[OK] Sift ready. DB tables ready. Uploads dir ready.")
 

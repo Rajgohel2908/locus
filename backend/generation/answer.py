@@ -19,7 +19,7 @@ import logging
 from sqlalchemy.orm import Session
 
 import config
-from db import QueryRecord, RetrievalResult, safe_json
+from db import QueryRecord, RetrievalResult, PipelineConfig, safe_json
 from indexing.embedder import Embedder, get_embedder
 from retrieval.dense import retrieve_dense
 from retrieval.filters import RetrievalFilters
@@ -159,6 +159,7 @@ def execute_query(
     lexical_retriever: Optional[LexicalRetriever] = None,
     reranker: Optional[Reranker] = None,
     version: Optional[int] = None,
+    pipeline_config_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Execute full RAG pipeline or structured computed path for a user question:
@@ -170,7 +171,28 @@ def execute_query(
        - Exact Phase 5 retrieval pipeline (router bypassed).
     """
     t_start = time.perf_counter()
-    k = top_k if top_k is not None else config.TOP_K
+
+    pipeline_cfg = None
+    cfg_index_runs = None
+    if pipeline_config_id is not None:
+        from fastapi import HTTPException
+        pipeline_cfg = db.query(PipelineConfig).filter(PipelineConfig.id == pipeline_config_id).first()
+        if not pipeline_cfg:
+            raise HTTPException(status_code=404, detail=f"Pipeline config {pipeline_config_id} not found.")
+
+        cfg_spec = pipeline_cfg.spec or {}
+        if not source_ids:
+            source_ids = list(pipeline_cfg.source_ids or [])
+        k = top_k if top_k is not None else cfg_spec.get("top_k", config.TOP_K)
+        cand_n = candidates_n if candidates_n is not None else cfg_spec.get("candidates_n", config.CANDIDATES_N)
+        if filters is None and cfg_spec.get("filters_default"):
+            filters = RetrievalFilters(**cfg_spec["filters_default"])
+        if index_run_id is None:
+            cfg_index_runs = [int(rid) for rid in (pipeline_cfg.index_runs or {}).values() if rid]
+    else:
+        k = top_k if top_k is not None else config.TOP_K
+        cand_n = candidates_n if candidates_n is not None else config.CANDIDATES_N
+
     threshold = min_score if min_score is not None else config.MIN_SCORE
     th_bm25 = min_bm25 if min_bm25 is not None else config.MIN_BM25
     th_rerank = min_rerank if min_rerank is not None else config.MIN_RERANK
@@ -181,161 +203,242 @@ def execute_query(
     answer_type = "generated"
 
     if strategy == "auto":
-        t_route_start = time.perf_counter()
-        context = build_schema_context(db=db, source_ids=source_ids, version=version)
-        features = extract_features(question, context)
+        # Baseline config disables router and structured path
+        if pipeline_cfg and (pipeline_cfg.kind == "baseline" or not pipeline_cfg.spec.get("router_enabled", True)):
+            strategy = pipeline_cfg.spec.get("strategy_default", "dense")
+            route_decision = None
+            route_name = "rag"
+            route_info_dict = {
+                "router_enabled": False,
+                "note": "Router and structured path disabled by baseline config",
+            }
+            answer_type = "generated"
+        else:
+            t_route_start = time.perf_counter()
+            context = build_schema_context(db=db, source_ids=source_ids, version=version)
+            features = extract_features(question, context)
 
-        # Cross-encoder availability check
-        cross_encoder_ok = True
-        try:
-            from retrieval.rerank import get_reranker
-            _r = reranker or get_reranker()
-            cross_encoder_ok = (_r is not None)
-        except Exception:
-            cross_encoder_ok = False
-
-        decision = decide_route(features, availability={"cross_encoder_available": cross_encoder_ok})
-        t_route_end = time.perf_counter()
-        route_ms = round((t_route_end - t_route_start) * 1000, 2)
-
-        if decision.route == "structured":
-            t_exec_start = time.perf_counter()
+            # Cross-encoder availability check
+            cross_encoder_ok = True
             try:
-                table_schema = context.tables[features.target_source_id]
-                op = features.aggregation_intent.op
-                col = features.target_column
-                grp = features.group_by_hint
-                filts = [(f.column, f.value) for f in features.filter_values if f.source_id == features.target_source_id]
-                template_req = "top_n" if features.row_identity_request else None
+                from retrieval.rerank import get_reranker
+                _r = reranker or get_reranker()
+                cross_encoder_ok = (_r is not None)
+            except Exception:
+                cross_encoder_ok = False
 
-                exec_res = execute_aggregation(
-                    db=db,
-                    table_schema=table_schema,
-                    op=op,
-                    column=col,
-                    group_by=grp,
-                    filters=filts,
-                    version=version,
-                    template=template_req,
-                    top_n=features.top_n,
-                )
-                t_exec_end = time.perf_counter()
-                exec_ms = round((t_exec_end - t_exec_start) * 1000, 2)
+            decision = decide_route(features, availability={"cross_encoder_available": cross_encoder_ok})
+            t_route_end = time.perf_counter()
+            route_ms = round((t_route_end - t_route_start) * 1000, 2)
 
-                if exec_res.get("reason") == "no_numeric_values":
-                    t_total = time.perf_counter() - t_start
-                    latency_ms = {
-                        "route": route_ms,
-                        "execute": exec_ms,
-                        "render": 0.0,
-                        "total": round(t_total * 1000, 2),
-                    }
-                    route_info = {
+            if decision.route == "structured":
+                if pipeline_cfg and not pipeline_cfg.spec.get("structured_route_enabled", True):
+                    logger.info("Structured route redirected to RAG: structured_route_enabled is False in pipeline config")
+                    strategy = pipeline_cfg.spec.get("strategy_default", "hybrid")
+                    route_decision = decision
+                    route_name = "rag"
+                    route_info_dict = {
                         "decision": decision.model_dump(),
-                        "spec": {
-                            "template": exec_res["template"],
-                            "op": op,
-                            "column": col,
-                            "group_by": grp,
-                            "filters": exec_res["filters"],
-                        },
-                        "result_summary": {
-                            "template": exec_res["template"],
-                            "sql_description": exec_res["sql_description"],
-                            "rows_considered": exec_res["rows_considered"],
-                            "rows_used": 0,
-                            "rows_excluded_non_numeric": exec_res["rows_excluded_non_numeric"],
-                            "rows_null": exec_res["rows_null"],
-                            "data_quality_notes": exec_res["data_quality_notes"],
-                            "reason": "no_numeric_values",
+                        "redirected_from_structured": True,
+                        "note": "Structured route redirected to RAG: structured_route_enabled is False in pipeline config",
+                    }
+                    answer_type = "generated"
+                else:
+                    t_exec_start = time.perf_counter()
+                    try:
+                        table_schema = context.tables[features.target_source_id]
+                        op = features.aggregation_intent.op
+                        col = features.target_column
+                        grp = features.group_by_hint
+                        filts = [(f.column, f.value) for f in features.filter_values if f.source_id == features.target_source_id]
+                        template_req = "top_n" if features.row_identity_request else None
+
+                        exec_res = execute_aggregation(
+                            db=db,
+                            table_schema=table_schema,
+                            op=op,
+                            column=col,
+                            group_by=grp,
+                            filters=filts,
+                            version=version,
+                            template=template_req,
+                            top_n=features.top_n,
+                        )
+                        t_exec_end = time.perf_counter()
+                        exec_ms = round((t_exec_end - t_exec_start) * 1000, 2)
+
+                        if exec_res.get("reason") == "no_numeric_values":
+                            t_total = time.perf_counter() - t_start
+                            latency_ms = {
+                                "route": route_ms,
+                                "execute": exec_ms,
+                                "render": 0.0,
+                                "total": round(t_total * 1000, 2),
+                            }
+                            route_info = {
+                                "decision": decision.model_dump(),
+                                "spec": {
+                                    "template": exec_res["template"],
+                                    "op": op,
+                                    "column": col,
+                                    "group_by": grp,
+                                    "filters": exec_res["filters"],
+                                },
+                                "result_summary": {
+                                    "template": exec_res["template"],
+                                    "sql_description": exec_res["sql_description"],
+                                    "rows_considered": exec_res["rows_considered"],
+                                    "rows_used": 0,
+                                    "rows_excluded_non_numeric": exec_res["rows_excluded_non_numeric"],
+                                    "rows_null": exec_res["rows_null"],
+                                    "data_quality_notes": exec_res["data_quality_notes"],
+                                    "reason": "no_numeric_values",
+                                }
+                            }
+                            q_record = QueryRecord(
+                                question=question,
+                                source_ids=source_ids,
+                                index_run_ids=[],
+                                top_k=k,
+                                min_score=threshold,
+                                strategy="auto",
+                                filters=safe_json(filters.model_dump() if filters else {}),
+                                route="structured",
+                                route_info=safe_json(route_info),
+                                answer_type="computed",
+                                status="insufficient_evidence",
+                                answer=None,
+                                latency_ms=safe_json(latency_ms),
+                                pipeline_config_id=pipeline_config_id,
+                            )
+                            db.add(q_record)
+                            db.commit()
+
+                            return {
+                                "query_id": q_record.id,
+                                "status": "insufficient_evidence",
+                                "answer": None,
+                                "answer_type": "computed",
+                                "citations": [],
+                                "invalid_citations": [],
+                                "retrieved": [],
+                                "evidence": {"passed": False, "signal": "no_numeric_values"},
+                                "route": decision.model_dump(),
+                                "config": {"strategy": "auto", "template": exec_res["template"], "pipeline_config_id": pipeline_config_id},
+                                "pipeline_config_id": pipeline_config_id,
+                                "latency_ms": latency_ms,
+                                "llm": {"provider": None, "model": None, "mock": False},
+                            }
+
+                        # Successful structured execution
+                        t_render_start = time.perf_counter()
+                        rendered_answer = render_answer(exec_res)
+                        t_render_end = time.perf_counter()
+                        render_ms = round((t_render_end - t_render_start) * 1000, 2)
+                        t_total = time.perf_counter() - t_start
+                        latency_ms = {
+                            "route": route_ms,
+                            "execute": exec_ms,
+                            "render": render_ms,
+                            "total": round(t_total * 1000, 2),
                         }
-                    }
-                    q_record = QueryRecord(
-                        question=question,
-                        source_ids=source_ids,
-                        index_run_ids=[],
-                        top_k=k,
-                        min_score=threshold,
-                        strategy="auto",
-                        filters=safe_json(filters.model_dump() if filters else {}),
-                        route="structured",
-                        route_info=safe_json(route_info),
-                        answer_type="computed",
-                        status="insufficient_evidence",
-                        answer=None,
-                        latency_ms=safe_json(latency_ms),
-                    )
-                    db.add(q_record)
-                    db.commit()
 
-                    return {
-                        "query_id": q_record.id,
-                        "status": "insufficient_evidence",
-                        "answer": None,
-                        "answer_type": "computed",
-                        "citations": [],
-                        "invalid_citations": [],
-                        "retrieved": [],
-                        "evidence": {"passed": False, "signal": "no_numeric_values"},
-                        "route": decision.model_dump(),
-                        "config": {"strategy": "auto", "template": exec_res["template"]},
-                        "latency_ms": latency_ms,
-                        "llm": {"provider": None, "model": None, "mock": False},
-                    }
+                        used_cols = []
+                        if col: used_cols.append(col)
+                        if grp: used_cols.append(grp)
+                        for fc, _ in filts: used_cols.append(fc)
+                        used_cols = list(dict.fromkeys(used_cols))
 
-                # Successful structured execution
-                t_render_start = time.perf_counter()
-                rendered_answer = render_answer(exec_res)
-                t_render_end = time.perf_counter()
-                render_ms = round((t_render_end - t_render_start) * 1000, 2)
+                        computed_citations = [{
+                            "type": "computed",
+                            "source_id": exec_res["source_id"],
+                            "source_name": exec_res["source_name"],
+                            "version": exec_res["version"],
+                            "columns": used_cols,
+                            "filters": exec_res["filters"],
+                            "rows_used": exec_res["rows_used"],
+                        }]
+
+                        route_info = {
+                            "decision": decision.model_dump(),
+                            "spec": {
+                                "template": exec_res["template"],
+                                "op": op,
+                                "column": col,
+                                "group_by": grp,
+                                "filters": exec_res["filters"],
+                            },
+                            "result_summary": {
+                                "template": exec_res["template"],
+                                "sql_description": exec_res["sql_description"],
+                                "rows_considered": exec_res["rows_considered"],
+                                "rows_used": exec_res["rows_used"],
+                                "rows_excluded_non_numeric": exec_res["rows_excluded_non_numeric"],
+                                "rows_null": exec_res["rows_null"],
+                                "data_quality_notes": exec_res["data_quality_notes"],
+                                "groups_count": len(exec_res.get("groups", [])),
+                                "groups_cut": exec_res.get("groups_cut", 0),
+                                "excluding_outliers_value": exec_res.get("excluding_outliers_value"),
+                                "outliers_count": exec_res.get("outliers_count", 0),
+                            }
+                        }
+
+                        q_record = QueryRecord(
+                            question=question,
+                            source_ids=source_ids,
+                            index_run_ids=[],
+                            top_k=k,
+                            min_score=threshold,
+                            strategy="auto",
+                            filters=safe_json(filters.model_dump() if filters else {}),
+                            route="structured",
+                            route_info=safe_json(route_info),
+                            answer_type="computed",
+                            status="answered",
+                            answer=rendered_answer,
+                            latency_ms=safe_json(latency_ms),
+                            pipeline_config_id=pipeline_config_id,
+                        )
+                        db.add(q_record)
+                        db.commit()
+
+                        return {
+                            "query_id": q_record.id,
+                            "status": "answered",
+                            "answer": rendered_answer,
+                            "answer_type": "computed",
+                            "citations": computed_citations,
+                            "invalid_citations": [],
+                            "retrieved": [],
+                            "evidence": {"passed": True, "signal": "computed_aggregation"},
+                            "route": decision.model_dump(),
+                            "config": {"strategy": "auto", "template": exec_res["template"], "pipeline_config_id": pipeline_config_id},
+                            "pipeline_config_id": pipeline_config_id,
+                            "latency_ms": latency_ms,
+                            "llm": {"provider": None, "model": None, "mock": False},
+                        }
+
+                    except Exception as e:
+                        logger.warning(f"Structured execution failed ({e}), falling back to RAG.")
+                        fallback_msg = f"structured_execution_failed: {str(e)}"
+                        features.mappable = False
+                        features.mappable_reason = f"execution_error: {str(e)}"
+                        decision = decide_route(features, availability={"cross_encoder_available": cross_encoder_ok})
+                        decision.fallbacks.append(fallback_msg)
+
+            # Fail-safe: row_identity_request that cannot be mapped must NEVER reach RAG
+            if features.row_identity_request and decision.route != "structured":
                 t_total = time.perf_counter() - t_start
                 latency_ms = {
                     "route": route_ms,
-                    "execute": exec_ms,
-                    "render": render_ms,
+                    "execute": 0.0,
+                    "render": 0.0,
                     "total": round(t_total * 1000, 2),
                 }
-
-                used_cols = []
-                if col: used_cols.append(col)
-                if grp: used_cols.append(grp)
-                for fc, _ in filts: used_cols.append(fc)
-                used_cols = list(dict.fromkeys(used_cols))
-
-                computed_citations = [{
-                    "type": "computed",
-                    "source_id": exec_res["source_id"],
-                    "source_name": exec_res["source_name"],
-                    "version": exec_res["version"],
-                    "columns": used_cols,
-                    "filters": exec_res["filters"],
-                    "rows_used": exec_res["rows_used"],
-                }]
-
                 route_info = {
                     "decision": decision.model_dump(),
-                    "spec": {
-                        "template": exec_res["template"],
-                        "op": op,
-                        "column": col,
-                        "group_by": grp,
-                        "filters": exec_res["filters"],
-                    },
-                    "result_summary": {
-                        "template": exec_res["template"],
-                        "sql_description": exec_res["sql_description"],
-                        "rows_considered": exec_res["rows_considered"],
-                        "rows_used": exec_res["rows_used"],
-                        "rows_excluded_non_numeric": exec_res["rows_excluded_non_numeric"],
-                        "rows_null": exec_res["rows_null"],
-                        "data_quality_notes": exec_res["data_quality_notes"],
-                        "groups_count": len(exec_res.get("groups", [])),
-                        "groups_cut": exec_res.get("groups_cut", 0),
-                        "excluding_outliers_value": exec_res.get("excluding_outliers_value"),
-                        "outliers_count": exec_res.get("outliers_count", 0),
-                    }
+                    "reason": "row_identity_not_supported",
                 }
-
                 q_record = QueryRecord(
                     question=question,
                     source_ids=source_ids,
@@ -344,92 +447,46 @@ def execute_query(
                     min_score=threshold,
                     strategy="auto",
                     filters=safe_json(filters.model_dump() if filters else {}),
-                    route="structured",
+                    route=decision.route,
                     route_info=safe_json(route_info),
                     answer_type="computed",
-                    status="answered",
-                    answer=rendered_answer,
+                    status="insufficient_evidence",
+                    answer=None,
                     latency_ms=safe_json(latency_ms),
+                    pipeline_config_id=pipeline_config_id,
                 )
                 db.add(q_record)
                 db.commit()
 
                 return {
                     "query_id": q_record.id,
-                    "status": "answered",
-                    "answer": rendered_answer,
+                    "status": "insufficient_evidence",
+                    "reason": "row_identity_not_supported",
+                    "answer": None,
                     "answer_type": "computed",
-                    "citations": computed_citations,
+                    "citations": [],
                     "invalid_citations": [],
                     "retrieved": [],
-                    "evidence": {"passed": True, "signal": "computed_aggregation"},
+                    "evidence": {"passed": False, "signal": "row_identity_not_supported"},
                     "route": decision.model_dump(),
-                    "config": {"strategy": "auto", "template": exec_res["template"]},
+                    "config": {"strategy": "auto", "template": None, "pipeline_config_id": pipeline_config_id},
+                    "pipeline_config_id": pipeline_config_id,
                     "latency_ms": latency_ms,
                     "llm": {"provider": None, "model": None, "mock": False},
                 }
 
-            except Exception as e:
-                logger.warning(f"Structured execution failed ({e}), falling back to RAG.")
-                fallback_msg = f"structured_execution_failed: {str(e)}"
-                features.mappable = False
-                features.mappable_reason = f"execution_error: {str(e)}"
-                decision = decide_route(features, availability={"cross_encoder_available": cross_encoder_ok})
-                decision.fallbacks.append(fallback_msg)
-
-        # Fail-safe: row_identity_request that cannot be mapped must NEVER reach RAG
-        if features.row_identity_request and decision.route != "structured":
-            t_total = time.perf_counter() - t_start
-            latency_ms = {
-                "route": route_ms,
-                "execute": 0.0,
-                "render": 0.0,
-                "total": round(t_total * 1000, 2),
-            }
-            route_info = {
-                "decision": decision.model_dump(),
-                "reason": "row_identity_not_supported",
-            }
-            q_record = QueryRecord(
-                question=question,
-                source_ids=source_ids,
-                index_run_ids=[],
-                top_k=k,
-                min_score=threshold,
-                strategy="auto",
-                filters=safe_json(filters.model_dump() if filters else {}),
-                route=decision.route,
-                route_info=safe_json(route_info),
-                answer_type="computed",
-                status="insufficient_evidence",
-                answer=None,
-                latency_ms=safe_json(latency_ms),
-            )
-            db.add(q_record)
-            db.commit()
-
-            return {
-                "query_id": q_record.id,
-                "status": "insufficient_evidence",
-                "reason": "row_identity_not_supported",
-                "answer": None,
-                "answer_type": "computed",
-                "citations": [],
-                "invalid_citations": [],
-                "retrieved": [],
-                "evidence": {"passed": False, "signal": "row_identity_not_supported"},
-                "route": decision.model_dump(),
-                "config": {"strategy": "auto", "template": None},
-                "latency_ms": latency_ms,
-                "llm": {"provider": None, "model": None, "mock": False},
-            }
-
-        # Non-structured routes (or fallback)
-        strategy = decision.strategy
-        route_decision = decision
-        route_name = decision.route
-        route_info_dict = {"decision": decision.model_dump()}
-        answer_type = "generated"
+            # Non-structured routes (or fallback)
+            if route_name != "rag" or "redirected_from_structured" not in route_info_dict:
+                if decision.route in ("semantic", "exact") and pipeline_cfg:
+                    strategy = pipeline_cfg.spec.get("strategy_default", "hybrid")
+                elif decision.route == "complex" and pipeline_cfg:
+                    strategy = "hybrid_rerank" if pipeline_cfg.spec.get("use_rerank", False) else "hybrid"
+                else:
+                    strategy = decision.strategy
+                route_decision = decision
+                route_name = decision.route
+                route_info_dict = {"decision": decision.model_dump()}
+                answer_type = "generated"
 
     embedder = embedder or get_embedder()
     llm = llm_client or get_llm_client()
@@ -443,13 +500,14 @@ def execute_query(
         strategy=strategy,
         filters=filters,
         top_k=k,
-        candidates_n=candidates_n,
+        candidates_n=cand_n,
         min_score=threshold,
         min_bm25=th_bm25,
         min_rerank=th_rerank,
         embedder=embedder,
         lexical_retriever=lexical_retriever,
         reranker=reranker,
+        index_run_ids=cfg_index_runs,
     )
 
     retrieved_summary = [
@@ -503,6 +561,7 @@ def execute_query(
             status=status,
             answer=answer,
             latency_ms=safe_json(latency_ms),
+            pipeline_config_id=pipeline_config_id,
         )
         db.add(q_record)
         db.flush()
@@ -547,7 +606,9 @@ def execute_query(
                 "min_score": threshold,
                 "strategy": "auto" if route_decision else strategy,
                 "index_run_id": resolved_run_ids[0] if resolved_run_ids else None,
+                "pipeline_config_id": pipeline_config_id,
             },
+            "pipeline_config_id": pipeline_config_id,
             "latency_ms": latency_ms,
             "llm": {"provider": None, "model": None, "mock": False},
         }
@@ -648,6 +709,7 @@ def execute_query(
         status=status,
         answer=answer,
         latency_ms=safe_json(latency_ms),
+        pipeline_config_id=pipeline_config_id,
     )
     db.add(q_record)
     db.flush()
@@ -693,7 +755,9 @@ def execute_query(
             "min_score": threshold,
             "strategy": "auto" if route_decision else strategy,
             "index_run_id": resolved_run_ids[0] if resolved_run_ids else None,
+            "pipeline_config_id": pipeline_config_id,
         },
+        "pipeline_config_id": pipeline_config_id,
         "latency_ms": latency_ms,
         "llm": {
             "provider": getattr(llm, "provider", config.LLM_PROVIDER),

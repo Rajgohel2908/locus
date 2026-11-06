@@ -60,14 +60,17 @@ def _make_test_engine():
 
 
 @pytest.fixture
-def db():
-    """Provide a test session backed by an in-memory SQLite database."""
-    engine = _make_test_engine()
-    Session = sessionmaker(bind=engine)
-    session = Session()
-    yield session
-    session.close()
-    engine.dispose()
+def db(request, pg_session):
+    """Provide a test session: real PostgreSQL (_test DB) for @pytest.mark.pg tests, in-memory SQLite otherwise."""
+    if request.node.get_closest_marker("pg"):
+        yield pg_session
+    else:
+        engine = _make_test_engine()
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        yield session
+        session.close()
+        engine.dispose()
 
 
 # ── Seed helpers ──────────────────────────────────────────────────────────────
@@ -121,6 +124,7 @@ def _add_proposal(db, source_id, kind, target, params, status="approved",
 # Core engine tests
 # ═════════════════════════════════════════════════════════════════════════════
 
+@pytest.mark.pg
 class TestApplyProposals:
 
     def test_no_approved_proposals_raises(self, db):

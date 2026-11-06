@@ -143,7 +143,8 @@ def render_answer(result: Dict[str, Any]) -> str:
                 ex_val_str = f"{ex_val:,}"
             else:
                 ex_val_str = str(ex_val)
-            lines.append(f"Excluding {ex_count} outlier values: {ex_val_str}")
+            prefix = "Average" if op == "avg" else "Total"
+            lines.append(f"{prefix} without {ex_count} potential outlier(s): {ex_val_str}")
 
     # Append quality notes if present
     notes = result.get("data_quality_notes", [])
