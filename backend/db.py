@@ -380,6 +380,124 @@ class PipelineConfig(Base):
     created_at        = Column(DateTime, default=datetime.utcnow)
 
 
+# ── Phase 7 Table Models ─────────────────────────────────────────────────────
+
+class EvalSuite(Base):
+    """Evaluation test suite definition."""
+    __tablename__ = "eval_suites"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    name        = Column(Text, nullable=False)
+    description = Column(Text, nullable=True)
+    source_ids  = Column(IntArray, nullable=False)
+    suite_hash  = Column(Text, nullable=False)
+    created_at  = Column(DateTime, default=datetime.utcnow)
+
+
+class EvalItem(Base):
+    """Single test item within an evaluation suite."""
+    __tablename__ = "eval_items"
+
+    id                = Column(Integer, primary_key=True, index=True)
+    suite_id          = Column(Integer, ForeignKey("eval_suites.id", ondelete="CASCADE"), nullable=False, index=True)
+    position          = Column(Integer, nullable=False, default=0)
+    question          = Column(Text, nullable=False)
+    item_type         = Column(Text, nullable=False)  # answerable | unanswerable | structured
+    expected_facts    = Column(JSONB, nullable=False, default=list)
+    reference_answer  = Column(Text, nullable=True)
+    expected_evidence = Column(JSONB, nullable=False, default=list)
+    expected_value    = Column(JSONB, nullable=True)
+    expected_route    = Column(Text, nullable=True)
+    origin            = Column(Text, nullable=False, default="agent_drafted")
+    reviewed          = Column(Boolean, nullable=False, default=False)
+    tags              = Column(JSONB, nullable=False, default=list)
+    created_at        = Column(DateTime, default=datetime.utcnow)
+
+
+class EvalRun(Base):
+    """Execution run of an evaluation suite against a specific variant/pipeline config."""
+    __tablename__ = "eval_runs"
+
+    id                 = Column(Integer, primary_key=True, index=True)
+    suite_id           = Column(Integer, ForeignKey("eval_suites.id", ondelete="CASCADE"), nullable=False, index=True)
+    name               = Column(Text, nullable=False)
+    variant            = Column(JSONB, nullable=False)
+    config_hash        = Column(Text, nullable=False)
+    index_run_ids      = Column(JSONB, nullable=False, default=dict)
+    generate           = Column(Boolean, nullable=False, default=False)
+    judge              = Column(Boolean, nullable=False, default=False)
+    include_unreviewed = Column(Boolean, nullable=False, default=False)
+    llm                = Column(JSONB, nullable=False, default=dict)
+    judge_llm          = Column(JSONB, nullable=False, default=dict)
+    status             = Column(Text, nullable=False, default="queued")
+    progress           = Column(JSONB, nullable=False, default=dict)
+    error              = Column(Text, nullable=True)
+    started_at         = Column(DateTime, nullable=True)
+    finished_at        = Column(DateTime, nullable=True)
+    seed               = Column(Integer, nullable=False, default=42)
+    provenance         = Column(JSONB, nullable=False, default=dict)
+    created_at         = Column(DateTime, default=datetime.utcnow)
+
+
+class EvalResult(Base):
+    """Detailed result for an item in an evaluation run."""
+    __tablename__ = "eval_results"
+    __table_args__ = (
+        UniqueConstraint("run_id", "item_id", name="uq_run_item"),
+    )
+
+    id          = Column(Integer, primary_key=True, index=True)
+    run_id      = Column(Integer, ForeignKey("eval_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    item_id     = Column(Integer, ForeignKey("eval_items.id", ondelete="CASCADE"), nullable=False)
+    query_id    = Column(Integer, ForeignKey("queries.id", ondelete="SET NULL"), nullable=True)
+    route       = Column(Text, nullable=True)
+    strategy    = Column(Text, nullable=True)
+    retrieved   = Column(JSONB, nullable=False, default=list)
+    answer      = Column(Text, nullable=True)
+    status      = Column(Text, nullable=False)
+    citations   = Column(JSONB, nullable=False, default=list)
+    metrics     = Column(JSONB, nullable=False, default=dict)
+    latency_ms  = Column(JSONB, nullable=False, default=dict)
+    llm_calls   = Column(Integer, nullable=False, default=0)
+    judge_calls = Column(Integer, nullable=False, default=0)
+    error       = Column(Text, nullable=True)
+    created_at  = Column(DateTime, default=datetime.utcnow)
+
+
+# ── Phase 7 Stage 2 Table Models: RAG Doctor ───────────────────────────────────
+
+class DoctorReport(Base):
+    """Diagnoses and recommendations produced by RAG Doctor across evaluation runs."""
+    __tablename__ = "doctor_reports"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    run_ids    = Column(IntArray, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    summary    = Column(JSONB, nullable=False, default=dict)
+
+
+class DoctorFinding(Base):
+    """Specific actionable finding produced by a Doctor rule."""
+    __tablename__ = "doctor_findings"
+
+    id                  = Column(Integer, primary_key=True, index=True)
+    report_id           = Column(Integer, ForeignKey("doctor_reports.id", ondelete="CASCADE"), nullable=False, index=True)
+    rule_id             = Column(Text, nullable=False)
+    severity            = Column(Text, nullable=False)      # critical / warning / info
+    title               = Column(Text, nullable=False)
+    diagnosis           = Column(Text, nullable=False)
+    evidence            = Column(JSONB, nullable=False, default=dict)
+    evidence_level      = Column(Text, nullable=False)      # observed / counterfactual / measured_effect / hypothesis
+    counterfactual      = Column(JSONB, nullable=False, default=dict)
+    proposed_patch      = Column(JSONB, nullable=False, default=dict)
+    expected_effect     = Column(Text, nullable=False)
+    cost_note           = Column(Text, nullable=False)
+    status              = Column(Text, nullable=False, default="proposed", index=True)
+    applied_config_id   = Column(Integer, ForeignKey("pipeline_configs.id"), nullable=True)
+    verification_run_id = Column(Integer, ForeignKey("eval_runs.id"), nullable=True)
+    created_at          = Column(DateTime, default=datetime.utcnow)
+
+
 # ── Init ──────────────────────────────────────────────────────────────────────
 
 def init_db():
@@ -392,6 +510,8 @@ def init_db():
     Phase 5: applies 005_phase5.sql for document_overrides, query strategy/filters, signals.
     Phase 6: applies 006_phase6.sql for queries.route, queries.route_info, queries.answer_type.
     Phase 6B: applies 007_phase6b.sql for recommendations, pipeline_configs, queries.pipeline_config_id.
+    Phase 7: applies 008_phase7_eval.sql and 009_phase7_doctor.sql.
+    Phase 7.1: applies 010_phase7_1.sql.
     Safe to call multiple times — all statements use IF NOT EXISTS.
     """
     with engine.connect() as conn:
@@ -405,7 +525,7 @@ def init_db():
     Base.metadata.create_all(bind=engine)
 
     # Apply each SQL migration in order (all use IF NOT EXISTS / ON CONFLICT)
-    for fname in ("002_phase2.sql", "003_phase3.sql", "004_phase4.sql", "005_phase5.sql", "006_phase6.sql", "007_phase6b.sql"):
+    for fname in ("002_phase2.sql", "003_phase3.sql", "004_phase4.sql", "005_phase5.sql", "006_phase6.sql", "007_phase6b.sql", "008_phase7_eval.sql", "009_phase7_doctor.sql", "010_phase7_1.sql"):
         migration_path = Path(__file__).parent / "migrations" / fname
         if migration_path.exists():
             sql = migration_path.read_text(encoding="utf-8-sig")

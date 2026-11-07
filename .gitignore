@@ -26,6 +26,7 @@ env/
 ENV/
 .venv/
 .venv*/
+test_venv/
 
 # Testing & Coverage
 .pytest_cache/
@@ -62,3 +63,11 @@ frontend/.env.local
 
 #folders
 /project_audit
+/sample_data
+backend/reports/
+.agent
+frontend/screenshots
+frontend/scripts
+frontend/.env
+backend/sample_data
+backend/uploads

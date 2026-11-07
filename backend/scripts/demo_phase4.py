@@ -138,9 +138,9 @@ def run_demo():
     # ─────────────────────────────────────────────────────────────────────────
     step("Step 1: Ingest HR Knowledge Base (.docx, .pdf) & Messy Employees (.csv)")
 
-    kb_docx = "sample_data/hr_kb/leave_policy_2024.docx"
-    kb_pdf  = "sample_data/hr_kb/handbook_working_hours.pdf"
-    csv_path = "sample_data/employees_messy.csv"
+    kb_docx = str(backend_dir / "sample_data" / "hr_kb" / "leave_policy_2024.docx")
+    kb_pdf  = str(backend_dir / "sample_data" / "hr_kb" / "handbook_working_hours.pdf")
+    csv_path = str(backend_dir / "sample_data" / "employees_messy.csv")
 
     # Upload Leave Policy DOCX
     with open(kb_docx, "rb") as f:

@@ -1,26 +1,28 @@
-# Sift — Phase 1 to Phase 6A: Routing & Structured Execution
+# Sift — Phase 1 to Phase 7: Quantitative Evaluation Suite & RAG Doctor v1
 
-A FastAPI + PostgreSQL (pgvector) backend that ingests files and websites, runs data-quality profiling, persists content to canonical stores, manages cleaning workflows with versioning and quarantine, provides a multi-strategy RAG system (dense, lexical, hybrid, hybrid_rerank), and features a deterministic rule-based query router with a no-RAG structured path for tabular records.
+A FastAPI + PostgreSQL (pgvector) backend that ingests files and websites, runs data-quality profiling, persists content to canonical stores, manages cleaning workflows with versioning and quarantine, provides a multi-strategy RAG system (dense, lexical, hybrid, hybrid_rerank), features a deterministic rule-based query router with a no-RAG structured path for tabular records, and includes a full quantitative evaluation suite with RAG Doctor v1 for automated, reproducible diagnosis and patching.
 
 ---
 
-## What's New in Phase 6A (Query Routing & Structured Execution)
+## What's New in Phase 7 (Evaluation Suite & RAG Doctor v1)
 
 | Feature | Details |
 |---|---|
-| **Deterministic Query Router** | Pure rule-based query analyzer and router using `router-rules-v1` heuristic priors. Zero LLM and zero embedding calls for routing decisions. |
-| **4 Execution Routes** | `structured` (fixed aggregation templates), `exact` (hybrid retrieval), `complex` (hybrid_rerank retrieval with fallback), `semantic` (hybrid retrieval). |
-| **No-RAG Structured Path** | Answers simple aggregation queries (`count`, `sum`, `avg`, `min`, `max`) over tabular `records` data using SQL templates on a single source version. 0 LLM and 0 embedding calls. |
-| **Standardized Numeric Parsing** | Standard SQL numeric parsing matching `^\s*-?[0-9][0-9,]*(\.[0-9]+)?\s*$`. Non-numeric entries tracked as `rows_excluded_non_numeric`. Zero usable rows returns `no_numeric_values` (`insufficient_evidence`, not 0). |
-| **Group-By & Filters** | Supports optional group-by on a single category column (capped at 50 groups) and equality filters (`column = value`). |
-| **Data Quality Notes** | Computed answers include context from data profiling & cleaning: duplicate rows, missingness % of used columns, pending critical proposals, and explicit uncleaned warnings on version 1. |
-| **Strategy "auto"** | `POST /query` with `strategy="auto"` routes queries dynamically to structured execution or the appropriate RAG retrieval strategy. |
-| **Per-Query Trace** | `GET /queries/{id}/trace` returns unified explainability for computed, retrieval, and insufficient-evidence queries. |
-| **New Route Endpoint** | `POST /route` evaluates query routing decisions and feature extractions without executing retrieval or generation. |
+| **Quantitative Evaluation Suite** | Internal benchmark suite runner operating at depth-20 retrieval. Computes deterministic metrics with strictly ZERO LLM calls for retrieval-only runs. |
+| **Canonical Suite Hash** | SHA-256 fingerprint computed across sorted benchmark items (excluding metadata like database IDs and `reviewed` flag) ensuring complete reproducibility. |
+| **Deterministic Metrics** | Depth-20 ranking evaluation: `hit@k`, `recall@k` (via union coverage), `precision@k`, `ndcg@k`, `mrr` ($k \in \{1, 3, 5, 10, 20\}$), `refusal_correct`, `unsafe_answer`, `false_refusal`, `value_match`, `route_accuracy`. |
+| **Evidence Matching Rule** | Pure token overlap ($\ge 80\%$) for document policy spans, exact `row_key` matching for structured record CSV rows, and union coverage for spans split across adjacent chunks. |
+| **95% Bootstrap CIs & Paired Comparisons** | Pure NumPy non-parametric bootstrap (2,000 resamples, seeded) computing 95% confidence intervals and paired difference distributions with `"difference not distinguishable from zero"` verdicts. |
+| **Parameter Sweep Matrix** | `POST /eval/matrix` executes multi-axis parameter sweeps (capped at 24 combinations) with pre-execution LLM budget estimation and validation. |
+| **Scorecard Generator** | `GET /eval/report.md` returns full Markdown scorecard with provenance table, core quantitative metrics with CIs, p50/p95 stage latencies, paired comparisons, and failure classifications. |
+| **RAG Doctor v1** | Pure Python rule-based diagnostic engine (D1 to D9) evaluating slice weaknesses, depth gaps, broad chunks, false refusals, unsafe answers, citation grounding, temporal conflicts, routing mismatches, and rerank overhead without LLM calls. |
+| **Doctor State Machine** | Formal lifecycle (`proposed` $\to$ `approved` / `rejected` $\to$ `applied` $\to$ `verified_improved` / `verified_no_change` / `verified_regressed`). Applying creates immutable `PipelineConfig` of kind `'doctor'` without touching existing configs. |
 
 ---
 
 ## What Was Added in Earlier Phases
+- **Phase 6B**: Recommendation state machine, pipeline configuration generator, and Mermaid architecture graph export.
+- **Phase 6A**: Query router (`router-rules-v1`), 4 execution routes (`structured`, `exact`, `complex`, `semantic`), no-RAG structured SQL execution path for tabular data (0 LLM, 0 embed).
 - **Phase 5**: Multi-strategy RAG (`dense`, `lexical`, `hybrid`, `hybrid_rerank`), document overrides (`published_at`, `title`), whitelisted metadata filters, explainability signals, stage latencies, freshness awareness, calibrated evidence gate thresholds, and `/retrieve/compare`.
 - **Phase 4**: Baseline dense RAG with pgvector HNSW cosine search, grounded generation, citation verification, and `insufficient_evidence` bypass.
 - **Phase 3**: Column role inference & confirmation, cleaning proposals, apply engine with transactional versioning (`active` / `quarantined` / `excluded` statuses).
@@ -940,9 +942,69 @@ flowchart TD
     reranker["Cross-Encoder Reranker (Enabled)"]
     guardrails["Evidence Gate & Guardrails"]
     llm["LLM Generator (gemini:gemini-1.5-flash)"]
-    evaluator["RAG Evaluator (Phase 7 Planned)"]
-    class evaluator planned;
+    evaluator["RAG Evaluator (Phase 7 Implemented)"]
 ```
+
+---
+
+## Phase 7: Quantitative Evaluation Suite & RAG Doctor v1
+
+Phase 7 provides a reproducible, statistical benchmarking framework and an automated rule-based diagnostic engine for self-healing RAG pipelines.
+
+### Stage 1: Quantitative Evaluation Suite
+
+1. **Benchmark Suite Schema & Canonical Hash:**
+   - Benchmark test suites (`eval_suites`, `eval_items`) define test cases covering answerable policy questions, structured queries, and unanswerable edge cases.
+   - `suite_hash`: Canonical SHA-256 hash computed over sorted item definitions (excluding database primary keys and the `reviewed` metadata flag). Ensures exact reproducibility across environments.
+   - Suite Immutability: Once an evaluation run has been recorded against a suite, the suite is **frozen**; attempting to modify items returns `409 Conflict`. Suites can be cloned via `POST /eval/suites/{id}/clone` to produce editable variations.
+
+2. **Depth-20 Retrieval & Deterministic Metrics:**
+   - Every candidate chunk is ranked at candidate depth-20; all $k \in \{1, 3, 5, 10, 20\}$ metrics are computed from the exact same ranking slice.
+   - `hit@k`, `recall@k` (via union token coverage), `precision@k`, `ndcg@k`, `mrr`.
+   - `refusal_correct`: Correct rejection of unanswerable queries by the evidence gate.
+   - `unsafe_answer`: Unanswerable queries that erroneously passed the evidence gate.
+   - `false_refusal`: Answerable queries containing target evidence rejected by the gate.
+   - `value_match`: Strict numeric value check within defined tolerance for structured queries with an assertion of zero LLM calls.
+
+3. **Evidence Matching Rules:**
+   - Document Spans: Word-boundary normalization with $\ge 80\%$ token overlap requirement.
+   - Structured CSV Records: Exact `row_key` matching (e.g. `row_24` / `Employee_ID=E1024`).
+   - Split Spans: When a target policy sentence spans across chunk boundaries, multi-chunk union coverage is evaluated.
+
+4. **Statistical Rigor (95% Bootstrap CIs & Paired Comparisons):**
+   - Non-parametric bootstrap resampling ($B = 2,000$, seeded) produces reproducible 95% confidence intervals for all quantitative metrics.
+   - Paired comparison calculates the delta distribution $\Delta = \text{Run}_A - \text{Run}_B$ on identical items. If $0 \in \text{CI}_{95}$, the verdict reports: `"difference not distinguishable from zero"`.
+
+5. **Parameter Sweep Matrix:**
+   - `POST /eval/matrix`: Varies parameters (`strategy`, `chunk_size`, `use_rerank`, `top_k`) up to a strict cap of 24 runs per sweep.
+   - Pre-execution budget check: Rejects matrix requests if estimated LLM calls exceed `max_llm_calls`.
+
+6. **Markdown Scorecard Generator:**
+   - `GET /eval/report.md`: Outputs full GitHub-flavored Markdown scorecards with provenance banners (`MOCK LLM RUN DETECTED`, `UNREVIEWED ITEMS INCLUDED`, `LLM-JUDGED METRICS`), core metric tables with CIs, stage latency percentiles (p50/p95), and diagnostic failure lists.
+
+---
+
+### Stage 2: RAG Doctor v1 (Rule-Based Diagnostics & Patching)
+
+RAG Doctor v1 is a deterministic diagnostic system that analyzes evaluation runs and recommends actionable configuration patches without using LLMs.
+
+1. **Diagnostic Rules (D1 to D9):**
+   - **D1 (`slice_weakness`):** Detects when a route slice (e.g. `exact` or `complex`) recall falls significantly below the overall run recall ($\ge 0.15$). Proposes routing to a strategy that demonstrated higher recall in a companion run (`measured`) or switches to hybrid (`hypothesis`).
+   - **D2 (`depth_gap`):** Fires when $\text{recall@20} - \text{recall@5} \ge 0.15$. Target evidence exists in depth-20 candidates but misses top-5. Proposes raising `top_k` or enabling cross-encoder reranking.
+   - **D3 (`broad_chunks`):** Triggers when hit rate is healthy ($\text{hit@5} \ge 0.50$) but precision is low ($\le 0.25$) and chunk length is $>4\times$ longer than evidence spans. Proposes halving chunk size to 400.
+   - **D4 (`false_refusals`):** Identifies answerable items where valid chunks were retrieved but rejected by the evidence gate. Proposes lowering `min_score`.
+   - **D5 (`unsafe_answers`):** Flags unanswerable queries that passed the evidence gate. Proposes raising `min_score` to prevent hallucinations.
+   - **D6 (`citation_problems`):** Identifies invalid or hallucinated bracket citation IDs. Proposes strict pre-delivery citation parsing and validation.
+   - **D7 (`stale_citations`):** Detects temporal conflicts where stale documents (e.g. 2019 policy) mingle with fresh documents (2024 policy). Proposes applying Phase 5 R7 freshness filtering.
+   - **D8 (`router_errors`):** Compares actual query route against expected route. Report-only finding for classifier tuning.
+   - **D9 (`rerank_no_gain`):** Triggers when cross-encoder reranking adds latency without statistically distinguishable gain in recall@5 or MRR (paired CI contains 0). Proposes setting `use_rerank: false`.
+
+2. **Doctor Lifecycle State Machine:**
+   $$\text{proposed} \longrightarrow \text{approved} \lor \text{rejected} \longrightarrow \text{applied} \longrightarrow \text{verified\_improved} \lor \text{verified\_no\_change} \lor \text{verified\_regressed}$$
+   - `POST /doctor/reports {run_ids}`: Analyzes runs and outputs findings with severity (`critical`, `warning`, `info`).
+   - `POST /doctor/findings/{id}/approve` & `reject`: Human-in-the-loop transition.
+   - `POST /doctor/findings/{id}/apply`: Generates a new `PipelineConfig` of `kind='doctor'`. Existing configurations are strictly immutable.
+   - `POST /doctor/findings/{id}/verify`: Automatically executes an evaluation run against the patched configuration, performs paired bootstrap comparison against the baseline, and updates status to `verified_improved`, `verified_no_change`, or `verified_regressed`.
 
 ---
 
@@ -955,3 +1017,5 @@ flowchart TD
 - Document overrides only take effect on NEW index runs.
 - If best retrieval score fails the evidence gate, the LLM is never called and status is `insufficient_evidence`.
 - Structured aggregations execute with 0 LLM and 0 embedding calls. Column names are strictly whitelisted and SQL uses bound parameters for all inputs.
+- Evaluation runs make strictly ZERO LLM calls for retrieval-only runs. Live runs enforce explicit budget caps.
+- RAG Doctor operates strictly via deterministic Python rules with no LLM dependency.

@@ -66,7 +66,7 @@ async function main() {
       cwd: BACKEND_DIR,
       env: {
         ...process.env,
-        DATABASE_URL: 'postgresql+psycopg2://postgres:raj1818@localhost:8887/ragstudio_demo',
+        DATABASE_URL: process.env.DEMO_DATABASE_URL || process.env.DATABASE_URL || 'postgresql+psycopg2://postgres@localhost:8887/ragstudio_demo',
         LLM_PROVIDER: 'mock',
         WARMUP_MODELS: '0',
       },

@@ -80,6 +80,10 @@ from routers.rag       import router as rag_router
 # Phase 6B router
 from routers.recommender import router as recommender_router
 
+# Phase 7 routers
+from routers.eval import router as eval_router
+from routers.doctor import router as doctor_router
+
 # ── Constants ─────────────────────────────────────────────────────────────────
 MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB
 
@@ -119,6 +123,8 @@ app.include_router(cleaning_router)   # Phase 3
 app.include_router(indexing_router)   # Phase 4
 app.include_router(rag_router)        # Phase 4
 app.include_router(recommender_router) # Phase 6B
+app.include_router(eval_router)        # Phase 7 Stage 1
+app.include_router(doctor_router)      # Phase 7 Stage 2
 
 
 @app.get("/", include_in_schema=False)

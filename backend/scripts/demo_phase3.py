@@ -23,10 +23,12 @@ Prerequisites
 
 import json
 import sys
+from pathlib import Path
 import requests
 
 BASE = "http://127.0.0.1:8000"
-CSV_PATH = "sample_data/employees_messy.csv"
+backend_dir = Path(__file__).resolve().parent.parent
+CSV_PATH = str(backend_dir / "sample_data" / "employees_messy.csv")
 
 RESET = "\033[0m"
 BOLD  = "\033[1m"
