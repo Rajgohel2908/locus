@@ -62,12 +62,13 @@ frontend/node_modules/
 frontend/.env.local
 
 #folders
-/project_audit
-/sample_data
+/project_audit/
+/sample_data/
 backend/reports/
 .agent
-frontend/screenshots
-frontend/scripts
-frontend/.env
-backend/sample_data
-backend/uploads
+frontend/SCREENSHOTS/
+frontend/scripts/
+frontend/.env*
+!frontend/.env*.example
+backend/sample_data/
+backend/uploads/
