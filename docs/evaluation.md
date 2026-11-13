@@ -77,6 +77,7 @@ The label lint engine verifies ground-truth benchmark labels against the active 
 - **Ambiguous Spans**: Flags expected spans that match 3 or more distinct documents in the knowledge base.
 - **Structured Row Key Presence**: For tabular items, verifies that the specified `row_key` exists in active records (`status='active'`).
 - **Expected Facts Verification**: Verifies that every required string in `expected_facts` occurs in the matched corpus text.
+- **Atomic Facts Enforcement**: Every entry in `expected_facts` must be atomic (a number, a proper name, or at most 3 tokens). Non-atomic entries fail lint with reason `fact_not_atomic` and provide a concrete truncation/shortening suggestion (e.g. sample item 10 uses atomic facts `"20"` and `"24"`).
 
 ---
 

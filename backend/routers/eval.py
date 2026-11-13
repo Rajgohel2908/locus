@@ -21,13 +21,26 @@ Endpoints:
 
 import csv
 import io
+import json
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, UploadFile, File
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from db import get_db, SessionLocal, EvalSuite, EvalItem, EvalRun, EvalResult, safe_json
+from db import (
+    get_db,
+    SessionLocal,
+    EvalSuite,
+    EvalItem,
+    EvalRun,
+    EvalResult,
+    Source,
+    Document,
+    Chunk,
+    Record,
+    safe_json,
+)
 from evaluation.engine import (
     create_eval_suite,
     import_suite_items,
@@ -38,6 +51,10 @@ from evaluation.engine import (
     generate_run_report,
     generate_markdown_scorecard,
     lint_eval_suite,
+    create_suite_item,
+    update_suite_item,
+    delete_suite_item,
+    split_eval_suite,
 )
 from evaluation.matrix import generate_matrix_runs
 from evaluation.stats import paired_bootstrap_comparison
@@ -55,6 +72,41 @@ class CreateSuiteRequest(BaseModel):
 
 class CloneSuiteRequest(BaseModel):
     new_name: str
+
+
+class SplitSuiteRequest(BaseModel):
+    holdout_fraction: float = Field(default=0.3, ge=0.0, le=1.0)
+    seed: int = 42
+
+
+class ItemCreateRequest(BaseModel):
+    question: str
+    item_type: str = "answerable"
+    expected_facts: Optional[List[str]] = None
+    reference_answer: Optional[str] = None
+    expected_evidence: Optional[List[Dict[str, Any]]] = None
+    expected_value: Optional[Any] = None
+    expected_route: Optional[str] = None
+    origin: Optional[str] = "hand"
+    reviewed: Optional[bool] = False
+    split: Optional[str] = None
+    tags: Optional[List[str]] = None
+    position: Optional[int] = None
+
+
+class ItemUpdateRequest(BaseModel):
+    question: Optional[str] = None
+    item_type: Optional[str] = None
+    expected_facts: Optional[List[str]] = None
+    reference_answer: Optional[str] = None
+    expected_evidence: Optional[List[Dict[str, Any]]] = None
+    expected_value: Optional[Any] = None
+    expected_route: Optional[str] = None
+    origin: Optional[str] = None
+    reviewed: Optional[bool] = None
+    split: Optional[str] = None
+    tags: Optional[List[str]] = None
+    position: Optional[int] = None
 
 
 class ReviewItemRequest(BaseModel):
@@ -208,11 +260,168 @@ def get_suite_endpoint(id: int, db: Session = Depends(get_db)):
                 "expected_route": it.expected_route,
                 "origin": it.origin,
                 "reviewed": it.reviewed,
+                "split": it.split,
                 "tags": it.tags,
             }
             for it in items
         ],
     }
+
+
+@router.post("/suites/{id}/split")
+def split_suite_endpoint(
+    id: int,
+    req: Optional[SplitSuiteRequest] = None,
+    db: Session = Depends(get_db),
+):
+    frac = req.holdout_fraction if req is not None else 0.3
+    sd = req.seed if req is not None else 42
+    return split_eval_suite(db=db, suite_id=id, holdout_fraction=frac, seed=sd)
+
+
+@router.post("/suites/{id}/items", status_code=201)
+def create_suite_item_endpoint(
+    id: int,
+    req: ItemCreateRequest,
+    db: Session = Depends(get_db),
+):
+    item = create_suite_item(db=db, suite_id=id, item_data=req.model_dump())
+    return {
+        "id": item.id,
+        "suite_id": item.suite_id,
+        "position": item.position,
+        "question": item.question,
+        "item_type": item.item_type,
+        "expected_facts": item.expected_facts,
+        "reference_answer": item.reference_answer,
+        "expected_evidence": item.expected_evidence,
+        "expected_value": item.expected_value,
+        "expected_route": item.expected_route,
+        "origin": item.origin,
+        "reviewed": item.reviewed,
+        "split": item.split,
+        "tags": item.tags,
+    }
+
+
+@router.put("/suites/{id}/items/{item_id}")
+def update_suite_item_endpoint(
+    id: int,
+    item_id: int,
+    req: ItemUpdateRequest,
+    db: Session = Depends(get_db),
+):
+    data = {k: v for k, v in req.model_dump().items() if v is not None}
+    item = update_suite_item(db=db, suite_id=id, item_id=item_id, item_data=data)
+    return {
+        "id": item.id,
+        "suite_id": item.suite_id,
+        "position": item.position,
+        "question": item.question,
+        "item_type": item.item_type,
+        "expected_facts": item.expected_facts,
+        "reference_answer": item.reference_answer,
+        "expected_evidence": item.expected_evidence,
+        "expected_value": item.expected_value,
+        "expected_route": item.expected_route,
+        "origin": item.origin,
+        "reviewed": item.reviewed,
+        "split": item.split,
+        "tags": item.tags,
+    }
+
+
+@router.delete("/suites/{id}/items/{item_id}")
+def delete_suite_item_endpoint(
+    id: int,
+    item_id: int,
+    db: Session = Depends(get_db),
+):
+    delete_suite_item(db=db, suite_id=id, item_id=item_id)
+    return {"status": "deleted", "suite_id": id, "item_id": item_id}
+
+
+@router.get("/sources/{id}/text-units")
+def get_source_text_units_endpoint(
+    id: int,
+    version: Optional[int] = Query(None, description="Filter by version_no"),
+    page: Optional[int] = Query(None, description="Filter by page_number"),
+    db: Session = Depends(get_db),
+):
+    source = db.query(Source).filter(Source.id == id).first()
+    if not source:
+        raise HTTPException(status_code=404, detail=f"Source {id} not found.")
+
+    doc_q = db.query(Document).filter(Document.source_id == id)
+    rec_q = db.query(Record).filter(Record.source_id == id, Record.status == "active")
+
+    if version is not None:
+        doc_q = doc_q.filter(Document.version_no == version)
+        rec_q = rec_q.filter(Record.version_no == version)
+
+    if page is not None:
+        doc_q = doc_q.filter(Document.page_number == page)
+
+    docs = doc_q.order_by(Document.page_number.asc().nulls_last(), Document.id.asc()).all()
+    records = rec_q.order_by(Record.row_index.asc(), Record.id.asc()).all()
+
+    units = []
+
+    # Documents
+    for d in docs:
+        if d.page_number is not None:
+            units.append({
+                "unit_id": f"doc_{d.id}_p{d.page_number}",
+                "source_id": id,
+                "document_id": d.id,
+                "page_number": d.page_number,
+                "unit_type": "page",
+                "title": d.title,
+                "text": d.content or "",
+            })
+        else:
+            chunks = db.query(Chunk).filter(Chunk.document_id == d.id).order_by(Chunk.chunk_index.asc()).all()
+            if chunks:
+                for ch in chunks:
+                    units.append({
+                        "unit_id": f"doc_{d.id}_chunk_{ch.chunk_index}",
+                        "source_id": id,
+                        "document_id": d.id,
+                        "chunk_id": ch.id,
+                        "chunk_index": ch.chunk_index,
+                        "unit_type": "chunk",
+                        "title": d.title,
+                        "text": ch.content or "",
+                    })
+            else:
+                paras = [p.strip() for p in (d.content or "").split("\n\n") if p.strip()]
+                if not paras and d.content:
+                    paras = [d.content.strip()]
+                for p_idx, para in enumerate(paras):
+                    units.append({
+                        "unit_id": f"doc_{d.id}_p_{p_idx}",
+                        "source_id": id,
+                        "document_id": d.id,
+                        "unit_type": "paragraph",
+                        "title": d.title,
+                        "text": para,
+                    })
+
+    # Records
+    if page is None:
+        for r in records:
+            serialized = json.dumps(r.data) if isinstance(r.data, dict) else str(r.data or "")
+            units.append({
+                "unit_id": f"rec_{r.id}",
+                "source_id": id,
+                "record_id": r.id,
+                "row_index": r.row_index,
+                "row_key": str(r.id),
+                "unit_type": "record",
+                "text": serialized,
+            })
+
+    return units
 
 
 @router.get("/suites/{id}/lint")
@@ -361,8 +570,12 @@ def get_run_endpoint(id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/runs/{id}/report")
-def get_run_report_endpoint(id: int, db: Session = Depends(get_db)):
-    return generate_run_report(db, id)
+def get_run_report_endpoint(
+    id: int,
+    split: Optional[str] = Query("all", description="Filter by split: dev, holdout, or all"),
+    db: Session = Depends(get_db),
+):
+    return generate_run_report(db, id, split=split)
 
 
 @router.get("/runs/{id}/results")
@@ -485,32 +698,66 @@ def matrix_sweep_endpoint(
 def compare_runs_endpoint(
     a: int = Query(..., description="Run ID A"),
     b: int = Query(..., description="Run ID B"),
+    split: Optional[str] = Query("all", description="dev, holdout, or all"),
     db: Session = Depends(get_db),
 ):
-    res_a = db.query(EvalResult).filter(EvalResult.run_id == a).all()
-    res_b = db.query(EvalResult).filter(EvalResult.run_id == b).all()
+    res_a_q = db.query(EvalResult).filter(EvalResult.run_id == a)
+    res_b_q = db.query(EvalResult).filter(EvalResult.run_id == b)
+
+    if split in ("dev", "holdout"):
+        res_a_q = res_a_q.join(EvalItem, EvalResult.item_id == EvalItem.id).filter(EvalItem.split == split)
+        res_b_q = res_b_q.join(EvalItem, EvalResult.item_id == EvalItem.id).filter(EvalItem.split == split)
+
+    res_a = res_a_q.all()
+    res_b = res_b_q.all()
 
     map_a = {r.item_id: r for r in res_a}
     map_b = {r.item_id: r for r in res_b}
     common = sorted(set(map_a.keys()) & set(map_b.keys()))
 
     if not common:
-        raise HTTPException(status_code=400, detail="No common items between the two runs.")
+        raise HTTPException(status_code=400, detail=f"No common items between the two runs for split='{split}'.")
 
-    out: Dict[str, Any] = {"run_a": a, "run_b": b, "common_items_count": len(common), "metrics": {}}
+    out: Dict[str, Any] = {
+        "run_a": a,
+        "run_b": b,
+        "split": split,
+        "common_items_count": len(common),
+        "metrics": {},
+        "route_slices": {},
+    }
 
-    for mk in ("hit@5", "recall@5", "precision@5", "mrr", "false_refusal"):
+    metrics_list = ("hit@5", "recall@5", "precision@5", "mrr", "false_refusal")
+    for mk in metrics_list:
         vals_a = []
         vals_b = []
         for iid in common:
             ma = map_a[iid].metrics or {}
             mb = map_b[iid].metrics or {}
-            if mk in ma and mk in mb:
+            if mk in ma and mk in mb and ma[mk] is not None and mb[mk] is not None:
                 vals_a.append(float(ma[mk]))
                 vals_b.append(float(mb[mk]))
 
         if vals_a:
             out["metrics"][mk] = paired_bootstrap_comparison(vals_a, vals_b, n_resamples=2000, seed=42)
+
+    # Route slices
+    route_to_items: Dict[str, List[int]] = {}
+    for iid in common:
+        rt = map_a[iid].route or "semantic"
+        route_to_items.setdefault(rt, []).append(iid)
+
+    for rt, slice_iids in sorted(route_to_items.items()):
+        slice_metrics: Dict[str, Any] = {}
+        for mk in metrics_list:
+            vals_a = [float(map_a[iid].metrics[mk]) for iid in slice_iids if mk in (map_a[iid].metrics or {}) and mk in (map_b[iid].metrics or {}) and map_a[iid].metrics[mk] is not None and map_b[iid].metrics[mk] is not None]
+            vals_b = [float(map_b[iid].metrics[mk]) for iid in slice_iids if mk in (map_a[iid].metrics or {}) and mk in (map_b[iid].metrics or {}) and map_a[iid].metrics[mk] is not None and map_b[iid].metrics[mk] is not None]
+            if vals_a:
+                slice_metrics[mk] = paired_bootstrap_comparison(vals_a, vals_b, n_resamples=1000, seed=42)
+        out["route_slices"][rt] = {
+            "n": len(slice_iids),
+            "metrics": slice_metrics,
+        }
 
     return out
 
@@ -518,6 +765,7 @@ def compare_runs_endpoint(
 @router.get("/report.md", response_class=PlainTextResponse)
 def get_report_markdown_endpoint(
     run_ids: str = Query(..., description="Comma-separated run IDs"),
+    split: Optional[str] = Query("all", description="dev, holdout, or all"),
     db: Session = Depends(get_db),
 ):
     try:
@@ -528,5 +776,5 @@ def get_report_markdown_endpoint(
     if not rids:
         raise HTTPException(status_code=400, detail="No run_ids provided.")
 
-    md_content = generate_markdown_scorecard(db, rids)
+    md_content = generate_markdown_scorecard(db, rids, split=split)
     return PlainTextResponse(md_content, media_type="text/markdown")

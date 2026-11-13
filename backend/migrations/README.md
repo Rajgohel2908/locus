@@ -20,6 +20,7 @@ Sift uses a **hybrid migration strategy**: SQLAlchemy ORM `create_all` for Phase
 | `008_phase7_eval.sql` | Phase 7 Stage 1 | `eval_suites`, `eval_items`, `eval_runs`, `eval_results` |
 | `009_phase7_doctor.sql` | Phase 7 Stage 2 | `doctor_reports`, `doctor_findings`, `pipeline_configs.kind` check extended |
 | `010_phase7_1.sql` | Phase 7.1 | `doctor_findings.counterfactual`, evidence_level check ('observed','counterfactual','measured_effect','hypothesis') |
+| `011_phase8_1.sql` | Phase 8.1 | `eval_items.split` ('dev'\|'holdout'\|NULL), `doctor_findings.status` extended with 'verified_inconclusive_small_n' |
 
 ---
 

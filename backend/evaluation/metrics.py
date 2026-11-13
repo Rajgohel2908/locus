@@ -105,6 +105,8 @@ def compute_item_metrics(
     route: Optional[str],
     generate: bool = False,
     llm_calls: int = 0,
+    structured_path_ran: bool = True,
+    predicted_route: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Compute all deterministic metrics for a single evaluation result.
@@ -195,14 +197,26 @@ def compute_item_metrics(
         metrics["unsafe_answer"] = 1.0 if is_unsafe else 0.0
 
     # 3. Structured Items Metrics
-    elif item_type == "structured":
-        metrics["value_match"] = check_structured_value_match(
-            answer, expected_value, llm_calls=llm_calls
-        )
+    if item_type == "structured" or expected_route == "structured":
+        if structured_path_ran:
+            metrics["value_match"] = check_structured_value_match(
+                answer, expected_value, llm_calls=llm_calls
+            )
+        else:
+            # Excluded with reason router_bypassed
+            metrics["value_match"] = None
+            metrics["value_match_reason"] = "router_bypassed"
 
     # 4. Route Accuracy
+    eval_route = predicted_route if predicted_route is not None else route
+    if eval_route is not None:
+        metrics["predicted_route"] = eval_route
     if expected_route:
-        metrics["route_accuracy"] = 1.0 if route == expected_route else 0.0
+        if eval_route is not None:
+            metrics["route_accuracy"] = 1.0 if eval_route == expected_route else 0.0
+        else:
+            metrics["route_accuracy"] = None
+            metrics["route_accuracy_reason"] = "router_unavailable"
 
     # 5. Generation Metrics (if generate=True and answer is provided)
     if generate:

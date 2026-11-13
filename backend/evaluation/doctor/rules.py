@@ -14,6 +14,26 @@ from evaluation.doctor.config import DoctorConfig
 from evaluation.stats import paired_bootstrap_comparison
 
 
+def _extract_dense_score_from_result(r: EvalResult) -> float:
+    """Extract dense cosine similarity score from result candidates (never RRF or rerank score)."""
+    if not r.retrieved or len(r.retrieved) == 0:
+        return 0.0
+    top = r.retrieved[0]
+    sig = top.get("signals") or {}
+    if sig.get("dense_score") is not None:
+        return float(sig["dense_score"])
+    if r.strategy == "dense" and top.get("score") is not None:
+        return float(top["score"])
+    dense_scores = [
+        float(c["signals"]["dense_score"])
+        for c in r.retrieved
+        if isinstance(c, dict) and (c.get("signals") or {}).get("dense_score") is not None
+    ]
+    if dense_scores:
+        return max(dense_scores)
+    return float(top.get("score") or 0.0)
+
+
 def compute_threshold_counterfactuals(
     answerable_results: List[EvalResult],
     unanswerable_results: List[EvalResult],
@@ -22,7 +42,7 @@ def compute_threshold_counterfactuals(
     """
     Deterministic counterfactual sweep over observed scores for D4/D5.
     
-    1. Extracts top candidate score for each item.
+    1. Extracts top candidate dense cosine score for each item (never RRF or rerank score).
     2. Sweeps across all observed score values.
     3. Computes unsafe_rate (unanswerable >= t) and false_refusal_rate (answerable < t).
     4. Selects threshold maximizing: (1 - unsafe_rate) - false_refusal_rate (lowest on tie).
@@ -30,14 +50,8 @@ def compute_threshold_counterfactuals(
     6. Adds warning when n_unanswerable < 20 or n_answerable < 30.
     7. Notes dense-cosine limitation for hybrid gates.
     """
-    ans_scores = [
-        float(r.retrieved[0].get("score", 0.0)) if (r.retrieved and len(r.retrieved) > 0) else 0.0
-        for r in answerable_results
-    ]
-    un_scores = [
-        float(r.retrieved[0].get("score", 0.0)) if (r.retrieved and len(r.retrieved) > 0) else 0.0
-        for r in unanswerable_results
-    ]
+    ans_scores = [_extract_dense_score_from_result(r) for r in answerable_results]
+    un_scores = [_extract_dense_score_from_result(r) for r in unanswerable_results]
 
     n_ans = len(ans_scores)
     n_un = len(un_scores)
@@ -419,17 +433,68 @@ def evaluate_rules(
         false_refusal_rate = len(false_refusal_items) / max(1, len(answerable_results))
 
         if false_refusal_rate > DoctorConfig.FALSE_REFUSAL_MAX_RATE:
-            cf_data = compute_threshold_counterfactuals(
-                answerable_results, unanswerable_results, current_threshold=current_threshold
-            )
-            in_s = cf_data["in_sample"]
-            exp_eff = (
-                f"at t={cf_data['optimal_threshold']:.2f} on this suite: unsafe "
-                f"{in_s.get('current_unsafe_count', 0)}/{cf_data['n_unanswerable']} -> "
-                f"{in_s.get('proposed_unsafe_count', 0)}/{cf_data['n_unanswerable']}, false refusals "
-                f"{in_s.get('current_false_refusal_count', 0)}/{cf_data['n_answerable']} -> "
-                f"{in_s.get('proposed_false_refusal_count', 0)}/{cf_data['n_answerable']}, in-sample"
-            )
+            dev_ans = [r for r in answerable_results if getattr(items_map.get(r.item_id), "split", None) == "dev"]
+            dev_un = [r for r in unanswerable_results if getattr(items_map.get(r.item_id), "split", None) == "dev"]
+            holdout_ans = [r for r in answerable_results if getattr(items_map.get(r.item_id), "split", None) == "holdout"]
+            holdout_un = [r for r in unanswerable_results if getattr(items_map.get(r.item_id), "split", None) == "holdout"]
+
+            has_dev_holdout = (len(dev_ans) + len(dev_un) > 0) and (len(holdout_ans) + len(holdout_un) > 0)
+
+            if has_dev_holdout:
+                # Fit threshold on dev only
+                cf_data = compute_threshold_counterfactuals(
+                    dev_ans, dev_un, current_threshold=current_threshold
+                )
+                opt_t = cf_data["optimal_threshold"]
+                n_un_ho = len(holdout_un)
+                n_ans_ho = len(holdout_ans)
+                ho_un_scores = [_extract_dense_score_from_result(r) for r in holdout_un]
+                ho_ans_scores = [_extract_dense_score_from_result(r) for r in holdout_ans]
+
+                cur_un_cnt = sum(1 for s in ho_un_scores if s >= current_threshold)
+                prop_un_cnt = sum(1 for s in ho_un_scores if s >= opt_t)
+                cur_fr_cnt = sum(1 for s in ho_ans_scores if s < current_threshold)
+                prop_fr_cnt = sum(1 for s in ho_ans_scores if s < opt_t)
+
+                exp_eff = (
+                    f"at t={opt_t:.2f} (fit on dev): holdout unsafe {cur_un_cnt}/{n_un_ho} -> {prop_un_cnt}/{n_un_ho}, "
+                    f"false refusals {cur_fr_cnt}/{n_ans_ho} -> {prop_fr_cnt}/{n_ans_ho}"
+                )
+                cf_data["holdout_effect"] = {
+                    "n_unanswerable": n_un_ho,
+                    "n_answerable": n_ans_ho,
+                    "current_unsafe_count": cur_un_cnt,
+                    "proposed_unsafe_count": prop_un_cnt,
+                    "current_false_refusal_count": cur_fr_cnt,
+                    "proposed_false_refusal_count": prop_fr_cnt,
+                }
+            else:
+                cf_data = compute_threshold_counterfactuals(
+                    answerable_results, unanswerable_results, current_threshold=current_threshold
+                )
+                in_s = cf_data["in_sample"]
+                exp_eff = (
+                    f"at t={cf_data['optimal_threshold']:.2f} on this suite: unsafe "
+                    f"{in_s.get('current_unsafe_count', 0)}/{cf_data['n_unanswerable']} -> "
+                    f"{in_s.get('proposed_unsafe_count', 0)}/{cf_data['n_unanswerable']}, false refusals "
+                    f"{in_s.get('current_false_refusal_count', 0)}/{cf_data['n_answerable']} -> "
+                    f"{in_s.get('proposed_false_refusal_count', 0)}/{cf_data['n_answerable']}, in-sample"
+                )
+
+            # Signal validation: check if run's gate uses a non-dense signal
+            gate_uses_other = False
+            gate_other_reason = ""
+            if strategy == "hybrid_rerank" or use_rerank:
+                gate_uses_other = True
+                gate_other_reason = "Run uses 'hybrid_rerank' where evidence gate evaluates min_rerank rather than dense cosine similarity. Cannot propose automated min_score patch."
+            elif strategy == "lexical":
+                gate_uses_other = True
+                gate_other_reason = "Run uses 'lexical' BM25 where evidence gate evaluates min_bm25 rather than dense cosine similarity. Cannot propose automated min_score patch."
+
+            ev_level = "observed" if gate_uses_other else "counterfactual"
+            prop_patch = {} if gate_uses_other else {"min_score": cf_data["optimal_threshold"]}
+            diag_suffix = f" {gate_other_reason}" if gate_uses_other else ""
+            c_note = f"Observed-only: {gate_other_reason}" if gate_uses_other else "May slightly increase candidate noise on vague inputs."
 
             findings.append({
                 "rule_id": "D4",
@@ -437,7 +502,7 @@ def evaluate_rules(
                 "title": f"Evidence Gate False Refusals (Run {run.id})",
                 "diagnosis": (
                     f"{len(false_refusal_items)} answerable items ({false_refusal_rate:.1%}) were refused by "
-                    f"the evidence gate despite having relevant candidate content."
+                    f"the evidence gate despite having relevant candidate content.{diag_suffix}"
                 ),
                 "evidence": {
                     "run_id": run.id,
@@ -445,11 +510,11 @@ def evaluate_rules(
                     "false_refusal_rate": round(false_refusal_rate, 4),
                     "affected_item_ids": false_refusal_items,
                 },
-                "evidence_level": "counterfactual",
+                "evidence_level": ev_level,
                 "counterfactual": cf_data,
-                "proposed_patch": {"min_score": cf_data["optimal_threshold"]},
-                "expected_effect": exp_eff,
-                "cost_note": "May slightly increase candidate noise on vague inputs.",
+                "proposed_patch": prop_patch,
+                "expected_effect": exp_eff if not gate_uses_other else gate_other_reason,
+                "cost_note": c_note,
                 "status": "proposed",
             })
         else:
@@ -466,17 +531,68 @@ def evaluate_rules(
         unsafe_rate = len(unsafe_items) / max(1, len(unanswerable_results))
 
         if unsafe_rate > DoctorConfig.UNSAFE_ANSWER_MAX_RATE:
-            cf_data = compute_threshold_counterfactuals(
-                answerable_results, unanswerable_results, current_threshold=current_threshold
-            )
-            in_s = cf_data["in_sample"]
-            exp_eff = (
-                f"at t={cf_data['optimal_threshold']:.2f} on this suite: unsafe "
-                f"{in_s.get('current_unsafe_count', 0)}/{cf_data['n_unanswerable']} -> "
-                f"{in_s.get('proposed_unsafe_count', 0)}/{cf_data['n_unanswerable']}, false refusals "
-                f"{in_s.get('current_false_refusal_count', 0)}/{cf_data['n_answerable']} -> "
-                f"{in_s.get('proposed_false_refusal_count', 0)}/{cf_data['n_answerable']}, in-sample"
-            )
+            dev_ans = [r for r in answerable_results if getattr(items_map.get(r.item_id), "split", None) == "dev"]
+            dev_un = [r for r in unanswerable_results if getattr(items_map.get(r.item_id), "split", None) == "dev"]
+            holdout_ans = [r for r in answerable_results if getattr(items_map.get(r.item_id), "split", None) == "holdout"]
+            holdout_un = [r for r in unanswerable_results if getattr(items_map.get(r.item_id), "split", None) == "holdout"]
+
+            has_dev_holdout = (len(dev_ans) + len(dev_un) > 0) and (len(holdout_ans) + len(holdout_un) > 0)
+
+            if has_dev_holdout:
+                # Fit threshold on dev only
+                cf_data = compute_threshold_counterfactuals(
+                    dev_ans, dev_un, current_threshold=current_threshold
+                )
+                opt_t = cf_data["optimal_threshold"]
+                n_un_ho = len(holdout_un)
+                n_ans_ho = len(holdout_ans)
+                ho_un_scores = [_extract_dense_score_from_result(r) for r in holdout_un]
+                ho_ans_scores = [_extract_dense_score_from_result(r) for r in holdout_ans]
+
+                cur_un_cnt = sum(1 for s in ho_un_scores if s >= current_threshold)
+                prop_un_cnt = sum(1 for s in ho_un_scores if s >= opt_t)
+                cur_fr_cnt = sum(1 for s in ho_ans_scores if s < current_threshold)
+                prop_fr_cnt = sum(1 for s in ho_ans_scores if s < opt_t)
+
+                exp_eff = (
+                    f"at t={opt_t:.2f} (fit on dev): holdout unsafe {cur_un_cnt}/{n_un_ho} -> {prop_un_cnt}/{n_un_ho}, "
+                    f"false refusals {cur_fr_cnt}/{n_ans_ho} -> {prop_fr_cnt}/{n_ans_ho}"
+                )
+                cf_data["holdout_effect"] = {
+                    "n_unanswerable": n_un_ho,
+                    "n_answerable": n_ans_ho,
+                    "current_unsafe_count": cur_un_cnt,
+                    "proposed_unsafe_count": prop_un_cnt,
+                    "current_false_refusal_count": cur_fr_cnt,
+                    "proposed_false_refusal_count": prop_fr_cnt,
+                }
+            else:
+                cf_data = compute_threshold_counterfactuals(
+                    answerable_results, unanswerable_results, current_threshold=current_threshold
+                )
+                in_s = cf_data["in_sample"]
+                exp_eff = (
+                    f"at t={cf_data['optimal_threshold']:.2f} on this suite: unsafe "
+                    f"{in_s.get('current_unsafe_count', 0)}/{cf_data['n_unanswerable']} -> "
+                    f"{in_s.get('proposed_unsafe_count', 0)}/{cf_data['n_unanswerable']}, false refusals "
+                    f"{in_s.get('current_false_refusal_count', 0)}/{cf_data['n_answerable']} -> "
+                    f"{in_s.get('proposed_false_refusal_count', 0)}/{cf_data['n_answerable']}, in-sample"
+                )
+
+            # Signal validation: check if run's gate uses a non-dense signal
+            gate_uses_other = False
+            gate_other_reason = ""
+            if strategy == "hybrid_rerank" or use_rerank:
+                gate_uses_other = True
+                gate_other_reason = "Run uses 'hybrid_rerank' where evidence gate evaluates min_rerank rather than dense cosine similarity. Cannot propose automated min_score patch."
+            elif strategy == "lexical":
+                gate_uses_other = True
+                gate_other_reason = "Run uses 'lexical' BM25 where evidence gate evaluates min_bm25 rather than dense cosine similarity. Cannot propose automated min_score patch."
+
+            ev_level = "observed" if gate_uses_other else "counterfactual"
+            prop_patch = {} if gate_uses_other else {"min_score": cf_data["optimal_threshold"]}
+            diag_suffix = f" {gate_other_reason}" if gate_uses_other else ""
+            c_note = f"Observed-only: {gate_other_reason}" if gate_uses_other else "Tighter threshold may reject borderline queries if phrasing is sparse."
 
             findings.append({
                 "rule_id": "D5",
@@ -484,7 +600,7 @@ def evaluate_rules(
                 "title": f"Unsafe Answers on Unanswerable Queries (Run {run.id})",
                 "diagnosis": (
                     f"{len(unsafe_items)} out-of-scope or unanswerable items ({unsafe_rate:.1%}) were answered "
-                    f"instead of refused by the evidence gate."
+                    f"instead of refused by the evidence gate.{diag_suffix}"
                 ),
                 "evidence": {
                     "run_id": run.id,
@@ -492,11 +608,11 @@ def evaluate_rules(
                     "unsafe_rate": round(unsafe_rate, 4),
                     "affected_item_ids": unsafe_items,
                 },
-                "evidence_level": "counterfactual",
+                "evidence_level": ev_level,
                 "counterfactual": cf_data,
-                "proposed_patch": {"min_score": cf_data["optimal_threshold"]},
-                "expected_effect": exp_eff,
-                "cost_note": "Tighter threshold may reject borderline queries if phrasing is sparse.",
+                "proposed_patch": prop_patch,
+                "expected_effect": exp_eff if not gate_uses_other else gate_other_reason,
+                "cost_note": c_note,
                 "status": "proposed",
             })
         else:
@@ -506,47 +622,61 @@ def evaluate_rules(
                 )
 
         # ── D6: Citation Problems ────────────────────────────────────────────
-        invalid_cit_items = [
-            r.item_id for r in results
-            if r.status == "unverified" or (r.metrics or {}).get("invalid_citation_rate", 0.0) > DoctorConfig.INVALID_CITATION_MAX_RATE
-        ]
-        if len(invalid_cit_items) > 0:
-            findings.append({
-                "rule_id": "D6",
-                "severity": "warning",
-                "title": f"Invalid or Hallucinated Bracket Citations (Run {run.id})",
-                "diagnosis": (
-                    f"{len(invalid_cit_items)} items contained citations referencing non-existent chunk IDs "
-                    f"or ungrounded context numbers."
-                ),
-                "evidence": {
-                    "run_id": run.id,
-                    "invalid_citation_count": len(invalid_cit_items),
-                    "affected_item_ids": invalid_cit_items,
-                },
-                "evidence_level": "hypothesis",
-                "proposed_patch": {"citation_enforcement": "strict_validation"},
-                "expected_effect": "Enforces pre-delivery citation parsing and post-processing verification.",
-                "cost_note": "Zero compute latency or token overhead.",
-                "status": "proposed",
-            })
-        else:
+        has_citations_eval = any(
+            (r.metrics or {}).get("invalid_citation_rate") is not None or r.status == "unverified"
+            for r in results
+        )
+        if not run.generate and not has_citations_eval:
             if "D6" not in not_fired_reasons:
-                not_fired_reasons["D6"] = "No invalid or hallucinated citations detected in results."
+                not_fired_reasons["D6"] = "not_evaluable: retrieval-only run (no generation or citations produced)"
+        else:
+            invalid_cit_items = [
+                r.item_id for r in results
+                if r.status == "unverified" or (r.metrics or {}).get("invalid_citation_rate", 0.0) > DoctorConfig.INVALID_CITATION_MAX_RATE
+            ]
+            if len(invalid_cit_items) > 0:
+                findings.append({
+                    "rule_id": "D6",
+                    "severity": "warning",
+                    "title": f"Invalid or Hallucinated Bracket Citations (Run {run.id})",
+                    "diagnosis": (
+                        f"{len(invalid_cit_items)} items contained citations referencing non-existent chunk IDs "
+                        f"or ungrounded context numbers."
+                    ),
+                    "evidence": {
+                        "run_id": run.id,
+                        "invalid_citation_count": len(invalid_cit_items),
+                        "affected_item_ids": invalid_cit_items,
+                    },
+                    "evidence_level": "hypothesis",
+                    "proposed_patch": {"citation_enforcement": "strict_validation"},
+                    "expected_effect": "Enforces pre-delivery citation parsing and post-processing verification.",
+                    "cost_note": "Zero compute latency or token overhead.",
+                    "status": "proposed",
+                })
+            else:
+                if "D6" not in not_fired_reasons:
+                    not_fired_reasons["D6"] = "No invalid or hallucinated citations detected in results."
 
         # ── D7: Stale Citations & Temporal Conflicts ─────────────────────────
         stale_conflict_items = []
+        pairs_examined = 0
         for r in answerable_results:
             retrieved_chunks = r.retrieved or []
             has_stale = False
             has_fresh = False
+            stale_count = 0
+            fresh_count = 0
             for ch in retrieved_chunks[:5]:
                 sig = ch.get("signals", {})
                 freshness = sig.get("freshness") or (ch.get("metadata") or {}).get("freshness")
                 if freshness == "stale":
                     has_stale = True
+                    stale_count += 1
                 elif freshness == "fresh":
                     has_fresh = True
+                    fresh_count += 1
+            pairs_examined += (stale_count * fresh_count)
 
             if has_stale and has_fresh:
                 stale_conflict_items.append(r.item_id)
@@ -564,6 +694,7 @@ def evaluate_rules(
                     "run_id": run.id,
                     "conflict_count": len(stale_conflict_items),
                     "affected_item_ids": stale_conflict_items,
+                    "pairs_examined": pairs_examined,
                 },
                 "evidence_level": "hypothesis",
                 "proposed_patch": {"filters": {"freshness": ["fresh", "unknown"]}},
@@ -573,18 +704,26 @@ def evaluate_rules(
             })
         else:
             if "D7" not in not_fired_reasons:
-                not_fired_reasons["D7"] = "No temporal conflict / stale policy interleaving detected."
+                not_fired_reasons["D7"] = (
+                    f"No temporal conflict / stale policy interleaving detected ({len(answerable_results)} items examined, {pairs_examined} retrieved stale/fresh pairs examined; 0 conflicts)."
+                )
 
         # ── D8: Router Errors ────────────────────────────────────────────────
         router_mismatch_items = []
+        route_eval_items = 0
         for r in results:
             item = items_map.get(r.item_id)
-            if item and item.expected_route and r.route and r.route != item.expected_route:
-                router_mismatch_items.append({
-                    "item_id": r.item_id,
-                    "actual_route": r.route,
-                    "expected_route": item.expected_route,
-                })
+            if item and item.expected_route:
+                pred = (r.metrics or {}).get("predicted_route") or r.route
+                if pred:
+                    route_eval_items += 1
+                    if pred != item.expected_route:
+                        router_mismatch_items.append({
+                            "item_id": r.item_id,
+                            "predicted_route": pred,
+                            "actual_route": pred,
+                            "expected_route": item.expected_route,
+                        })
 
         if len(router_mismatch_items) > 0:
             findings.append({
@@ -592,13 +731,15 @@ def evaluate_rules(
                 "severity": "info",
                 "title": f"Query Route Classification Mismatch (Run {run.id})",
                 "diagnosis": (
-                    f"{len(router_mismatch_items)} items were routed to a different execution route "
+                    f"{len(router_mismatch_items)} items had predicted route different "
                     f"than specified in the benchmark suite expected_route."
                 ),
                 "evidence": {
                     "run_id": run.id,
                     "mismatches": router_mismatch_items,
                     "affected_item_ids": [m["item_id"] for m in router_mismatch_items],
+                    "total_evaluated": route_eval_items,
+                    "mismatch_count": len(router_mismatch_items),
                 },
                 "evidence_level": "observed",
                 "proposed_patch": {},  # Report-only
@@ -608,10 +749,14 @@ def evaluate_rules(
             })
         else:
             if "D8" not in not_fired_reasons:
-                not_fired_reasons["D8"] = "Router classification matches expected route across all items."
+                if route_eval_items == 0:
+                    not_fired_reasons["D8"] = "not_evaluable: no items with expected_route evaluated by router."
+                else:
+                    not_fired_reasons["D8"] = "Router classification matches expected route across all items."
 
     # ── D9: Rerank No Gain ───────────────────────────────────────────────────
     d9_fired = False
+    rerank_pair_found = False
     for i, run_a in enumerate(runs):
         for run_b in runs[i + 1:]:
             var_a = run_a.variant or {}
@@ -623,6 +768,7 @@ def evaluate_rules(
             rerank_b = bool(var_b.get("use_rerank", False) or strat_b == "hybrid_rerank")
 
             if rerank_a != rerank_b:
+                rerank_pair_found = True
                 run_rerank = run_a if rerank_a else run_b
                 run_no_rerank = run_b if rerank_a else run_a
 
@@ -631,43 +777,47 @@ def evaluate_rules(
 
                 common_ids = sorted(set(res_rerank.keys()) & set(res_no_rerank.keys()))
                 if len(common_ids) >= 10:
-                    vals_rerank = [float((res_rerank[iid].metrics or {}).get("recall@5", 0.0)) for iid in common_ids]
-                    vals_no_rerank = [float((res_no_rerank[iid].metrics or {}).get("recall@5", 0.0)) for iid in common_ids]
+                    vals_rerank = [float((res_rerank[iid].metrics or {}).get("recall@5", 0.0)) for iid in common_ids if "recall@5" in (res_rerank[iid].metrics or {}) and res_rerank[iid].metrics["recall@5"] is not None]
+                    vals_no_rerank = [float((res_no_rerank[iid].metrics or {}).get("recall@5", 0.0)) for iid in common_ids if "recall@5" in (res_no_rerank[iid].metrics or {}) and res_no_rerank[iid].metrics["recall@5"] is not None]
 
-                    comp = paired_bootstrap_comparison(vals_rerank, vals_no_rerank, n_resamples=2000, seed=42)
-                    ci_low = comp["ci_low"]
-                    ci_high = comp["ci_high"]
+                    if len(vals_rerank) >= 10 and len(vals_no_rerank) >= 10:
+                        comp = paired_bootstrap_comparison(vals_rerank, vals_no_rerank, n_resamples=2000, seed=42)
+                        ci_low = comp["ci_low"]
+                        ci_high = comp["ci_high"]
 
-                    if ci_low <= 0.0 <= ci_high:
-                        d9_fired = True
-                        findings.append({
-                            "rule_id": "D9",
-                            "severity": "info",
-                            "title": f"Reranking Overhead Without Distinguishable Gain (Runs {run_rerank.id} vs {run_no_rerank.id})",
-                            "diagnosis": (
-                                f"Enabling cross-encoder reranking (Run {run_rerank.id}) yielded a mean delta of "
-                                f"{comp['mean_delta']:+.4f} in recall@5 with 95% paired CI [{ci_low:+.4f}, {ci_high:+.4f}], "
-                                f"which is not statistically distinguishable from zero while adding reranking latency."
-                            ),
-                            "evidence": {
-                                "run_rerank_id": run_rerank.id,
-                                "run_baseline_id": run_no_rerank.id,
-                                "mean_delta": comp["mean_delta"],
-                                "ci_95": [ci_low, ci_high],
-                                "wins": comp["wins"],
-                                "losses": comp["losses"],
-                                "ties": comp["ties"],
-                                "verdict": comp["verdict"],
-                            },
-                            "evidence_level": "measured_effect",
-                            "proposed_patch": {"use_rerank": False},
-                            "expected_effect": "Disables reranking step, saving 30-100 ms per query without measurable loss in recall@5.",
-                            "cost_note": "Saves CPU computation and lowers p95 response time.",
-                            "status": "proposed",
-                        })
+                        if ci_low <= 0.0 <= ci_high:
+                            d9_fired = True
+                            findings.append({
+                                "rule_id": "D9",
+                                "severity": "info",
+                                "title": f"Reranking Overhead Without Distinguishable Gain (Runs {run_rerank.id} vs {run_no_rerank.id})",
+                                "diagnosis": (
+                                    f"Enabling cross-encoder reranking (Run {run_rerank.id}) yielded a mean delta of "
+                                    f"{comp['mean_delta']:+.4f} in recall@5 with 95% paired CI [{ci_low:+.4f}, {ci_high:+.4f}], "
+                                    f"which is not statistically distinguishable from zero while adding reranking latency."
+                                ),
+                                "evidence": {
+                                    "run_rerank_id": run_rerank.id,
+                                    "run_baseline_id": run_no_rerank.id,
+                                    "mean_delta": comp["mean_delta"],
+                                    "ci_95": [ci_low, ci_high],
+                                    "wins": comp["wins"],
+                                    "losses": comp["losses"],
+                                    "ties": comp["ties"],
+                                    "verdict": comp["verdict"],
+                                },
+                                "evidence_level": "measured_effect",
+                                "proposed_patch": {"use_rerank": False},
+                                "expected_effect": "Disables reranking step, saving 30-100 ms per query without measurable loss in recall@5.",
+                                "cost_note": "Saves CPU computation and lowers p95 response time.",
+                                "status": "proposed",
+                            })
 
     if not d9_fired and "D9" not in not_fired_reasons:
-        not_fired_reasons["D9"] = "No rerank vs no-rerank pair available or rerank shows significant gain."
+        if not rerank_pair_found:
+            not_fired_reasons["D9"] = "no pair available: no paired rerank vs no-rerank run comparison found"
+        else:
+            not_fired_reasons["D9"] = "rerank shows gain: cross-encoder reranking demonstrates statistically significant recall improvement (CI strictly > 0)"
 
     if return_not_fired:
         return findings, not_fired_reasons

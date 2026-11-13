@@ -107,8 +107,8 @@ ENABLE_DOCS = os.getenv("ENABLE_DOCS", "0").strip().lower() in ("1", "true", "ye
 
 # ── App init ──────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="Sift — Phase 1-4 Baseline RAG",
-    description="Data ingestion + quality profiling + content store + web crawler + cleaning workflow + baseline RAG",
+    title="LOCUS — Train, Embed, Retrieve",
+    description="LOCUS — Place where knowledge lives. Train, embed, retrieve your files into RAG.",
     version="4.0.0",
     docs_url="/docs" if ENABLE_DOCS else None,
     redoc_url="/redoc" if ENABLE_DOCS else None,
@@ -132,7 +132,7 @@ def root():
     """Root health and heartbeat endpoint."""
     if ENABLE_DOCS:
         return RedirectResponse(url="/docs")
-    return {"status": "online", "app": "Sift Platform", "version": "4.0.0"}
+    return {"status": "online", "app": "LOCUS Platform", "version": "4.0.0"}
 
 
 

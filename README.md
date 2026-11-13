@@ -1,6 +1,8 @@
-# Sift — Verifiable Enterprise RAG & Data Quality Platform
+# LOCUS — Train, Embed, Retrieve
 
-Sift is a production-grade, verifiable RAG and data quality system featuring deterministic data profiling, transactional tabular cleaning, multi-strategy vector search, rule-based routing, and a comprehensive quantitative evaluation harness with **RAG Doctor v1** for automated diagnostic analysis and verified remediation.
+**LOCUS — Place where knowledge lives. Train, embed, retrieve your files into RAG.**
+
+LOCUS is a production-grade, verifiable RAG and data quality system featuring deterministic data profiling, transactional tabular cleaning, multi-strategy vector search, rule-based routing, and a comprehensive quantitative evaluation harness with **RAG Doctor v1** for automated diagnostic analysis and verified remediation.
 
 ---
 
@@ -81,6 +83,7 @@ Estimates are reported both **in-sample** and using **Leave-One-Out (jackknife)*
 - Verifies best token overlap against corpus chunks ($\ge 50\%$).
 - Confirms structured `row_key` presence in active table records.
 - Verifies that all `expected_facts` strings occur in the matched corpus text.
+- Enforces atomic facts: `expected_facts` entries must be atomic (a number, a name, or at most 3 tokens); non-atomic facts raise lint failure `fact_not_atomic` with a shortening suggestion (e.g. sample item 10 uses atomic facts `"20"` and `"24"`).
 - Detects duplicate questions across the benchmark suite.
 
 ### 2.6 Non-Parametric Paired Bootstrap
@@ -119,7 +122,7 @@ Automated patch workflow (Approve $\to$ Apply $\to$ Verify Run) with paired CI v
 ## 4. Quickstart & Verification Commands
 
 ### 4.1 Prerequisites
-- Python 3.10+
+- Python 3.12.10 (tested and verified; dependencies pinned in `backend/requirements.txt` and `backend/requirements-dev.txt`)
 - Node.js 18+
 - PostgreSQL 16 with pgvector (running at `localhost:8887` or configured via `DATABASE_URL`)
 
@@ -132,7 +135,7 @@ Automated patch workflow (Approve $\to$ Apply $\to$ Verify Run) with paired CI v
 .\venv\Scripts\pytest.exe backend/tests backend/security_tests -v
 
 # Run PostgreSQL-backed tests against ragstudio_test
-$env:TEST_DATABASE_URL="postgresql://postgres:raj1818@localhost:8887/ragstudio_test"
+$env:TEST_DATABASE_URL="postgresql://postgres:<password>@localhost:8887/ragstudio_test"
 .\venv\Scripts\pytest.exe -m pg -v
 
 # Run slow-marked tests
@@ -142,7 +145,7 @@ $env:RUN_SLOW="1"
 
 ### 4.3 Run Phase 7 End-to-End Evaluation Demo
 ```bash
-$env:DEMO_DATABASE_URL="postgresql://postgres:raj1818@localhost:8887/ragstudio_demo"
+$env:DEMO_DATABASE_URL="postgresql://postgres:<password>@localhost:8887/ragstudio_demo"
 .\venv\Scripts\python.exe backend/scripts/demo_phase7.py --standalone
 ```
 

@@ -9,7 +9,7 @@ export default function NotFound() {
       </div>
       <h2 className="font-heading font-bold text-2xl text-fg">Page Not Found</h2>
       <p className="text-sm text-muted max-w-md">
-        The requested resource or page does not exist in Sift.
+        The requested resource or page does not exist in LOCUS.
       </p>
       <Link
         href="/sources"

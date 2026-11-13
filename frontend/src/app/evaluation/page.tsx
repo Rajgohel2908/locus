@@ -22,6 +22,10 @@ import {
   Download,
   Flame,
   Zap,
+  Bookmark,
+  Split,
+  Crosshair,
+  PenTool,
 } from "lucide-react";
 import {
   api,
@@ -34,10 +38,11 @@ import {
   LintReport,
   SourceItem,
   PipelineConfigItem,
+  TextUnitItem,
 } from "@/lib/api";
 
 export default function EvaluationPage() {
-  const [activeTab, setActiveTab] = useState<"suites" | "runner" | "scorecard" | "compare">("suites");
+  const [activeTab, setActiveTab] = useState<"suites" | "runner" | "scorecard" | "compare" | "builder">("suites");
 
   // Suites state
   const [suites, setSuites] = useState<EvalSuiteItem[]>([]);
@@ -46,6 +51,12 @@ export default function EvaluationPage() {
   const [lintReport, setLintReport] = useState<LintReport | null>(null);
   const [isLintDrawerOpen, setIsLintDrawerOpen] = useState<boolean>(false);
   const [loadingSuites, setLoadingSuites] = useState<boolean>(false);
+
+  // Split control state
+  const [holdoutFraction, setHoldoutFraction] = useState<number>(0.3);
+  const [splitSeed, setSplitSeed] = useState<number>(42);
+  const [splittingSuite, setSplittingSuite] = useState<boolean>(false);
+  const [isSplitModalOpen, setIsSplitModalOpen] = useState<boolean>(false);
 
   // Sources & Pipeline configs
   const [sources, setSources] = useState<SourceItem[]>([]);
@@ -56,12 +67,33 @@ export default function EvaluationPage() {
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
   const [runReport, setRunReport] = useState<RunReport | null>(null);
   const [loadingReport, setLoadingReport] = useState<boolean>(false);
+  const [scorecardSplit, setScorecardSplit] = useState<"all" | "dev" | "holdout">("all");
 
   // Compare state
   const [compareRunA, setCompareRunA] = useState<number | null>(null);
   const [compareRunB, setCompareRunB] = useState<number | null>(null);
+  const [compareSplit, setCompareSplit] = useState<"all" | "dev" | "holdout">("all");
   const [compareResult, setCompareResult] = useState<CompareRunsResult | null>(null);
   const [loadingCompare, setLoadingCompare] = useState<boolean>(false);
+
+  // Gold Set Builder state
+  const [builderSuiteId, setBuilderSuiteId] = useState<number | null>(null);
+  const [builderSourceId, setBuilderSourceId] = useState<number | null>(null);
+  const [builderVersion, setBuilderVersion] = useState<number | undefined>(undefined);
+  const [builderPage, setBuilderPage] = useState<number>(1);
+  const [textUnits, setTextUnits] = useState<TextUnitItem[]>([]);
+  const [totalUnits, setTotalUnits] = useState<number>(0);
+  const [loadingUnits, setLoadingUnits] = useState<boolean>(false);
+  const [selectedUnit, setSelectedUnit] = useState<TextUnitItem | null>(null);
+  const [builderQuestion, setBuilderQuestion] = useState<string>("");
+  const [builderItemType, setBuilderItemType] = useState<string>("answerable");
+  const [builderExpectedRoute, setBuilderExpectedRoute] = useState<string>("semantic");
+  const [builderSelectedSpan, setBuilderSelectedSpan] = useState<string>("");
+  const [builderFacts, setBuilderFacts] = useState<string>("");
+  const [builderReferenceAnswer, setBuilderReferenceAnswer] = useState<string>("");
+  const [builderRowKey, setBuilderRowKey] = useState<string>("");
+  const [savingItem, setSavingItem] = useState<boolean>(false);
+  const [builderValidationStatus, setBuilderValidationStatus] = useState<{ status: number; message: string; details?: any } | null>(null);
 
   // Single Variant Runner Form State
   const [runnerSuiteId, setRunnerSuiteId] = useState<number>(1);
@@ -118,7 +150,12 @@ export default function EvaluationPage() {
       if (sList.length > 0) {
         setSelectedSuiteId(sList[0].id);
         setRunnerSuiteId(sList[0].id);
+        setBuilderSuiteId(sList[0].id);
         loadSuiteDetail(sList[0].id);
+      }
+      if (srcList.length > 0) {
+        setBuilderSourceId(srcList[0].id);
+        loadTextUnits(srcList[0].id, undefined, 1);
       }
       if (rList.length > 0) {
         setSelectedRunId(rList[0].id);
@@ -141,6 +178,125 @@ export default function EvaluationPage() {
       setSuiteDetail(det);
     } catch (err: any) {
       setNotification({ type: "error", msg: err.message });
+    }
+  }
+
+  async function handleSplitSuite(suiteId: number) {
+    setSplittingSuite(true);
+    try {
+      const res = await api.splitEvalSuite(suiteId, holdoutFraction, splitSeed);
+      setNotification({
+        type: "success",
+        msg: `Deterministic split established: ${res.dev_count} dev, ${res.holdout_count} holdout (total: ${res.total}, seed: ${res.seed})`,
+      });
+      setIsSplitModalOpen(false);
+      await loadSuiteDetail(suiteId);
+      const sList = await api.getEvalSuites();
+      setSuites(sList);
+    } catch (err: any) {
+      setNotification({ type: "error", msg: err.message || "Failed to split suite" });
+    } finally {
+      setSplittingSuite(false);
+    }
+  }
+
+  async function loadTextUnits(sourceId: number, versionNo?: number, page: number = 1) {
+    setLoadingUnits(true);
+    try {
+      const raw = (await api.getTextUnits(sourceId, versionNo, page)) as any;
+      const list: TextUnitItem[] = Array.isArray(raw) ? raw : (raw?.units || []);
+      setTextUnits(list);
+      setTotalUnits(Array.isArray(raw) ? list.length : (raw?.total_units || list.length));
+      setBuilderPage(page);
+      if (list.length > 0) {
+        setSelectedUnit(list[0]);
+        if (list[0].row_key) {
+          setBuilderRowKey(list[0].row_key);
+        }
+      }
+    } catch (err: any) {
+      setNotification({ type: "error", msg: err.message || "Failed to load text units" });
+    } finally {
+      setLoadingUnits(false);
+    }
+  }
+
+  function handleCaptureSelection() {
+    const sel = window.getSelection();
+    const str = sel ? sel.toString().trim() : "";
+    if (!str) {
+      setNotification({ type: "info", msg: "Highlight text inside the text unit display to capture verbatim span." });
+      return;
+    }
+    if (selectedUnit && !selectedUnit.text.includes(str)) {
+      setNotification({ type: "error", msg: "Selection must occur verbatim in the active text unit." });
+      return;
+    }
+    setBuilderSelectedSpan(str);
+    setNotification({ type: "success", msg: `Captured verbatim span (${str.length} chars).` });
+  }
+
+  async function handleCreateGoldItem(e: React.FormEvent) {
+    e.preventDefault();
+    if (!builderSuiteId) {
+      setNotification({ type: "error", msg: "Select a draft suite first." });
+      return;
+    }
+    if (!builderQuestion.trim()) {
+      setNotification({ type: "error", msg: "Question cannot be empty." });
+      return;
+    }
+    setSavingItem(true);
+    setBuilderValidationStatus(null);
+
+    const rawFacts = builderFacts.split(",").map((f) => f.trim()).filter(Boolean);
+    const evidenceList: any[] = [];
+    if (selectedUnit) {
+      evidenceList.push({
+        unit_id: selectedUnit.unit_id,
+        span: builderSelectedSpan || undefined,
+        document_id: selectedUnit.source_type === "document" ? selectedUnit.source_id : undefined,
+        page_number: selectedUnit.page_number,
+        row_key: builderRowKey || selectedUnit.row_key,
+      });
+    }
+
+    const payload = {
+      question: builderQuestion.trim(),
+      item_type: builderItemType,
+      expected_route: builderExpectedRoute,
+      expected_facts: rawFacts,
+      reference_answer: builderReferenceAnswer.trim() || undefined,
+      expected_evidence: evidenceList,
+      expected_value: builderItemType === "structured" ? builderReferenceAnswer.trim() : undefined,
+    };
+
+    try {
+      const res = await api.createEvalItem(builderSuiteId, payload);
+      setBuilderValidationStatus({
+        status: 201,
+        message: `Successfully created Test Case #${res.id}. Verbatim span verified against ${selectedUnit?.unit_id || "source"}.`,
+        details: res,
+      });
+      setNotification({ type: "success", msg: `Created Test Case #${res.id} in Suite #${builderSuiteId}.` });
+      setBuilderQuestion("");
+      setBuilderSelectedSpan("");
+      setBuilderFacts("");
+      setBuilderReferenceAnswer("");
+      if (selectedSuiteId === builderSuiteId) {
+        loadSuiteDetail(builderSuiteId);
+      }
+    } catch (err: any) {
+      let code = 422;
+      if (err.message && err.message.includes("409")) code = 409;
+      if (err.message && err.message.includes("422")) code = 422;
+      setBuilderValidationStatus({
+        status: code,
+        message: err.message || "Validation failed: expected span does not occur verbatim or suite is frozen.",
+      });
+      setNotification({ type: "error", msg: err.message });
+    } finally {
+      setSavingItem(false);
     }
   }
 
@@ -175,10 +331,11 @@ export default function EvaluationPage() {
     }
   }
 
-  async function loadRunReport(id: number) {
+  async function loadRunReport(id: number, split?: "all" | "dev" | "holdout") {
     setLoadingReport(true);
     try {
-      const rep = await api.getEvalRunReport(id);
+      const sp = split !== undefined ? split : scorecardSplit;
+      const rep = await api.getEvalRunReport(id, sp);
       setRunReport(rep);
     } catch (err: any) {
       setNotification({ type: "error", msg: err.message });
@@ -270,11 +427,12 @@ export default function EvaluationPage() {
     }
   }
 
-  async function handleCompare() {
+  async function handleCompare(split?: "all" | "dev" | "holdout") {
     if (!compareRunA || !compareRunB || compareRunA === compareRunB) return;
     setLoadingCompare(true);
     try {
-      const res = await api.compareEvalRuns(compareRunA, compareRunB);
+      const sp = split !== undefined ? split : compareSplit;
+      const res = await api.compareEvalRuns(compareRunA, compareRunB, sp);
       setCompareResult(res);
     } catch (err: any) {
       setNotification({ type: "error", msg: err.message });
@@ -351,6 +509,19 @@ export default function EvaluationPage() {
           >
             Paired Comparison
           </button>
+          <button
+            onClick={() => {
+              setActiveTab("builder");
+              if (builderSourceId && textUnits.length === 0) {
+                loadTextUnits(builderSourceId, builderVersion, 1);
+              }
+            }}
+            className={`px-3 py-1.5 rounded text-xs transition-colors ${
+              activeTab === "builder" ? "bg-slate text-electric font-semibold border border-electric/40" : "text-muted hover:text-fg"
+            }`}
+          >
+            Gold Set Builder
+          </button>
         </div>
       </div>
 
@@ -426,10 +597,21 @@ export default function EvaluationPage() {
                       <span>Sources: {suiteDetail.source_ids.join(", ")}</span>
                       <span>•</span>
                       <span>Reviewed: {suiteDetail.items.filter((it) => it.reviewed).length} / {suiteDetail.items.length}</span>
+                      <span>•</span>
+                      <span>Split: {suiteDetail.items.filter((it) => it.split === "dev").length} dev / {suiteDetail.items.filter((it) => it.split === "holdout").length} holdout</span>
                     </div>
                   </div>
 
                   <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setIsSplitModalOpen(!isSplitModalOpen)}
+                      disabled={suiteDetail.is_frozen}
+                      className="px-3 py-1.5 bg-slate hover:bg-slate/80 text-fg rounded border border-graphite flex items-center gap-2 transition-colors disabled:opacity-50"
+                      title={suiteDetail.is_frozen ? "Split can only be established before first run" : "Deterministic hash-based stratified split"}
+                    >
+                      <Split className="w-3.5 h-3.5 text-electric" />
+                      <span>Partition (Dev / Holdout)</span>
+                    </button>
                     <button
                       onClick={() => handleRunLint(suiteDetail.id)}
                       className="px-3 py-1.5 bg-slate hover:bg-slate/80 text-fg rounded border border-graphite flex items-center gap-2 transition-colors"
@@ -461,6 +643,58 @@ export default function EvaluationPage() {
                   </div>
                 </div>
 
+                {/* Partition Drawer / Modal */}
+                {isSplitModalOpen && (
+                  <div className="p-4 bg-obsidian border border-electric/40 rounded-lg space-y-3">
+                    <div className="flex items-center justify-between border-b border-graphite pb-2">
+                      <span className="font-bold text-fg text-xs flex items-center gap-2">
+                        <Split className="w-4 h-4 text-electric" />
+                        <span>Deterministic Hash-Based Stratified Split (Dev / Holdout)</span>
+                      </span>
+                      <span className="text-[10px] text-muted">Allowed strictly before the first eval run</span>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                      <div>
+                        <label className="block text-[10px] text-muted mb-1">Holdout Fraction (e.g. 0.30 for 30%)</label>
+                        <input
+                          type="number"
+                          step="0.05"
+                          min="0.1"
+                          max="0.5"
+                          value={holdoutFraction}
+                          onChange={(e) => setHoldoutFraction(parseFloat(e.target.value))}
+                          className="w-full bg-slate border border-graphite rounded px-3 py-1.5 text-fg text-xs font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-muted mb-1">Deterministic Seed</label>
+                        <input
+                          type="number"
+                          value={splitSeed}
+                          onChange={(e) => setSplitSeed(parseInt(e.target.value))}
+                          className="w-full bg-slate border border-graphite rounded px-3 py-1.5 text-fg text-xs font-mono"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleSplitSuite(suiteDetail.id)}
+                          disabled={splittingSuite}
+                          className="flex-1 py-1.5 px-3 bg-electric hover:bg-electric/90 text-obsidian font-bold rounded flex items-center justify-center gap-2 text-xs transition-colors disabled:opacity-50"
+                        >
+                          {splittingSuite ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Split className="w-3.5 h-3.5" />}
+                          <span>Execute Partition</span>
+                        </button>
+                        <button
+                          onClick={() => setIsSplitModalOpen(false)}
+                          className="py-1.5 px-3 bg-slate text-muted hover:text-fg rounded border border-graphite text-xs"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Items Table */}
                 <div className="overflow-x-auto border border-graphite rounded-lg">
                   <table className="w-full text-left border-collapse">
@@ -468,6 +702,7 @@ export default function EvaluationPage() {
                       <tr>
                         <th className="py-2.5 px-3 w-12 text-center">Pos</th>
                         <th className="py-2.5 px-3 w-28">Type</th>
+                        <th className="py-2.5 px-3 w-20 text-center">Split</th>
                         <th className="py-2.5 px-3">Question & Expected Evidence</th>
                         <th className="py-2.5 px-3 w-28">Route</th>
                         <th className="py-2.5 px-3 w-24">Origin</th>
@@ -489,6 +724,19 @@ export default function EvaluationPage() {
                               }`}
                             >
                               {it.item_type}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-mono ${
+                                it.split === "dev"
+                                  ? "bg-electric/15 text-electric border border-electric/30"
+                                  : it.split === "holdout"
+                                  ? "bg-purple-500/15 text-purple-400 border border-purple-500/30"
+                                  : "bg-slate text-muted"
+                              }`}
+                            >
+                              {it.split || "none"}
                             </span>
                           </td>
                           <td className="py-2.5 px-3 space-y-1">
@@ -872,26 +1120,51 @@ export default function EvaluationPage() {
         {/* ==================================================================== */}
         {activeTab === "scorecard" && (
           <div className="space-y-6">
-            {/* Run Selector Pills */}
-            <div className="flex items-center gap-2 overflow-x-auto pb-2 border-b border-graphite">
-              {runs.map((r) => (
-                <button
-                  key={r.id}
-                  onClick={() => {
-                    setSelectedRunId(r.id);
-                    loadRunReport(r.id);
-                  }}
-                  className={`px-3 py-1.5 rounded text-xs flex items-center gap-2 whitespace-nowrap transition-colors ${
-                    selectedRunId === r.id
-                      ? "bg-electric/20 text-electric border border-electric/50 font-bold"
-                      : "bg-carbon border border-graphite text-muted hover:text-fg"
-                  }`}
-                >
-                  <span>Run #{r.id}</span>
-                  <span className="text-[10px] text-muted font-normal">({r.variant.strategy || "auto"})</span>
-                  <span className={`w-2 h-2 rounded-full ${r.status === "completed" ? "bg-emerald" : r.status === "failed" ? "bg-crimson" : "bg-amber"}`} />
-                </button>
-              ))}
+            {/* Run Selector & Split Filter */}
+            <div className="flex flex-wrap items-center justify-between gap-4 pb-2 border-b border-graphite">
+              <div className="flex items-center gap-2 overflow-x-auto">
+                {runs.map((r) => (
+                  <button
+                    key={r.id}
+                    onClick={() => {
+                      setSelectedRunId(r.id);
+                      loadRunReport(r.id, scorecardSplit);
+                    }}
+                    className={`px-3 py-1.5 rounded text-xs flex items-center gap-2 whitespace-nowrap transition-colors ${
+                      selectedRunId === r.id
+                        ? "bg-electric/20 text-electric border border-electric/50 font-bold"
+                        : "bg-carbon border border-graphite text-muted hover:text-fg"
+                    }`}
+                  >
+                    <span>Run #{r.id}</span>
+                    <span className="text-[10px] text-muted font-normal">({r.variant.strategy || "auto"})</span>
+                    <span className={`w-2 h-2 rounded-full ${r.status === "completed" ? "bg-emerald" : r.status === "failed" ? "bg-crimson" : "bg-amber"}`} />
+                  </button>
+                ))}
+              </div>
+
+              {/* Split Filter Toggle */}
+              <div className="flex items-center gap-1 bg-slate/60 p-1 rounded border border-graphite">
+                <span className="text-[10px] text-muted px-1.5 font-bold uppercase">Split:</span>
+                {(["all", "dev", "holdout"] as const).map((sp) => (
+                  <button
+                    key={sp}
+                    onClick={() => {
+                      setScorecardSplit(sp);
+                      if (selectedRunId) {
+                        loadRunReport(selectedRunId, sp);
+                      }
+                    }}
+                    className={`px-2 py-0.5 rounded text-[10px] font-mono uppercase transition-colors ${
+                      scorecardSplit === sp
+                        ? "bg-electric text-obsidian font-bold"
+                        : "text-muted hover:text-fg"
+                    }`}
+                  >
+                    {sp}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {loadingReport && (
@@ -905,6 +1178,13 @@ export default function EvaluationPage() {
               <div className="space-y-6">
                 {/* STICKY DIAGNOSTIC BANNERS */}
                 <div className="space-y-2">
+                  {runReport.composition?.skew_banner && (
+                    <div className="p-3 bg-amber/10 border border-amber/40 rounded text-amber text-xs font-semibold flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 flex-shrink-0 text-amber" />
+                      <span><strong>SUITE SKEW DETECTED:</strong> {runReport.composition.skew_banner} (labeled heuristic)</span>
+                    </div>
+                  )}
+
                   {runReport.banners?.dirty_tree && (
                     <div className="p-3 bg-amber/10 border border-amber/40 rounded text-amber text-xs flex items-center gap-2">
                       <AlertTriangle className="w-4 h-4 flex-shrink-0" />
@@ -932,6 +1212,13 @@ export default function EvaluationPage() {
                       <span><strong>MOCK LLM GENERATION:</strong> Generation & judge metrics are INVALID for evaluation claims.</span>
                     </div>
                   )}
+
+                  {runReport.banners?.llm_judged && (
+                    <div className="p-3 bg-purple-500/10 border border-purple-500/40 rounded text-purple-300 text-xs flex items-center gap-2">
+                      <Info className="w-4 h-4 flex-shrink-0 text-purple-400" />
+                      <span><strong>LLM JUDGE ACTIVE:</strong> Quality judgements computed using external LLM evaluation.</span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Scorecard Header & Actions */}
@@ -942,7 +1229,7 @@ export default function EvaluationPage() {
                       <span className="text-xs text-muted font-normal">(Run ID #{runReport.run_id})</span>
                     </h2>
                     <div className="text-[11px] text-muted mt-1">
-                      Status: <span className="text-emerald font-semibold uppercase">{runReport.status}</span> | Strategy: <code className="text-electric">{runReport.variant.strategy}</code> | Top K: <code className="text-fg">{runReport.variant.top_k}</code>
+                      Status: <span className="text-emerald font-semibold uppercase">{runReport.status}</span> | Strategy: <code className="text-electric">{runReport.variant.strategy}</code> | Split Filter: <code className="text-electric uppercase">{scorecardSplit}</code> | Top K: <code className="text-fg">{runReport.variant.top_k}</code>
                     </div>
                   </div>
 
@@ -955,6 +1242,60 @@ export default function EvaluationPage() {
                   </button>
                 </div>
 
+                {/* Suite Composition Panel */}
+                {runReport.composition && (
+                  <div className="bg-carbon rounded-lg border border-graphite p-4 space-y-3">
+                    <div className="flex items-center justify-between border-b border-graphite/50 pb-2">
+                      <span className="text-[11px] font-bold text-fg uppercase tracking-wider text-muted/70">
+                        Suite Composition ({runReport.composition.total_items} items, Split: <span className="text-electric uppercase">{runReport.composition.split}</span>)
+                      </span>
+                      {runReport.composition.skew_banner && (
+                        <span className="text-[10px] text-amber border border-amber/30 px-2 py-0.5 rounded bg-amber/5">
+                          Skew &gt; 60%
+                        </span>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-[11px]">
+                      <div className="p-2.5 rounded bg-slate/40 border border-graphite/40 space-y-1">
+                        <div className="text-muted text-[10px] uppercase font-bold">Item Types</div>
+                        {Object.entries(runReport.composition.item_types || {}).map(([type, cnt]) => (
+                          <div key={type} className="flex justify-between">
+                            <span className="capitalize text-muted">{type}:</span>
+                            <span className="font-mono font-bold text-fg">{cnt}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="p-2.5 rounded bg-slate/40 border border-graphite/40 space-y-1">
+                        <div className="text-muted text-[10px] uppercase font-bold">Expected Routes</div>
+                        {Object.entries(runReport.composition.expected_routes || {}).map(([rt, cnt]) => (
+                          <div key={rt} className="flex justify-between">
+                            <span className="capitalize text-muted">{rt}:</span>
+                            <span className="font-mono font-bold text-fg">{cnt}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="p-2.5 rounded bg-slate/40 border border-graphite/40 space-y-1">
+                        <div className="text-muted text-[10px] uppercase font-bold">Source Types</div>
+                        {Object.entries(runReport.composition.source_types || {}).map(([st, cnt]) => (
+                          <div key={st} className="flex justify-between">
+                            <span className="capitalize text-muted">{st}:</span>
+                            <span className="font-mono font-bold text-fg">{cnt}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="p-2.5 rounded bg-slate/40 border border-graphite/40 space-y-1">
+                        <div className="text-muted text-[10px] uppercase font-bold">Answerable by Route</div>
+                        {Object.entries(runReport.composition.answerable_by_route || {}).map(([rt, cnt]) => (
+                          <div key={rt} className="flex justify-between">
+                            <span className="capitalize text-muted">{rt}:</span>
+                            <span className="font-mono font-bold text-fg">{cnt}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Provenance Card */}
                 {runReport.provenance && (
                   <div className="bg-carbon rounded-lg border border-graphite p-4 space-y-2">
@@ -963,7 +1304,10 @@ export default function EvaluationPage() {
                       <div>Git Commit: <code className="text-electric">{runReport.provenance.git_commit?.slice(0, 8) || "N/A"}</code></div>
                       <div>Dirty Tree: <span className={runReport.provenance.dirty ? "text-amber font-bold" : "text-emerald"}>{runReport.provenance.dirty ? "YES (DIRTY)" : "CLEAN"}</span></div>
                       <div>Python: <span className="text-fg">{runReport.provenance.python_version || "3.12.10"}</span></div>
+                      <div>Freshness Ref Date: <span className="text-fg font-mono">{runReport.provenance.freshness_reference_date || "2026-10-24"}</span></div>
+                      <div>Index Run IDs: <code className="text-fg font-mono">{JSON.stringify(runReport.provenance.index_run_ids || [])}</code></div>
                       <div>Suite Hash: <code className="text-muted/80">{runReport.provenance.suite_hash?.slice(0, 12)}</code></div>
+                      <div>CI Method: <span className="text-fg">{runReport.provenance.ci_method || "percentile_bootstrap"} (seed={runReport.provenance.seed || 42}, B={runReport.provenance.B || 2000})</span></div>
                       <div className="col-span-2">Embedder: <span className="text-fg">{runReport.provenance.embedder?.name}</span></div>
                       <div className="col-span-2">Reranker: <span className="text-fg">{runReport.provenance.reranker?.name}</span></div>
                     </div>
@@ -984,27 +1328,98 @@ export default function EvaluationPage() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-graphite/30">
-                        {Object.entries(runReport.metrics || {}).map(([metricName, m]) => (
-                          <tr key={metricName} className="hover:bg-slate/20">
-                            <td className="py-2 px-3 font-bold text-fg">{metricName}</td>
-                            <td className="py-2 px-3 text-right font-mono">
-                              {m.mean.toFixed(4)}
-                              {m.precision_ceiling !== undefined && (
-                                <span className="text-muted ml-2 text-[10px]">
-                                  (ceiling: {m.precision_ceiling.toFixed(4)})
-                                </span>
-                              )}
-                            </td>
-                            <td className="py-2 px-3 font-mono text-muted">
-                              [{m.ci_lower.toFixed(4)}, {m.ci_upper.toFixed(4)}]
-                            </td>
-                            <td className="py-2 px-3 text-center font-mono text-muted/80">{m.n}</td>
-                          </tr>
-                        ))}
+                        {Object.entries(runReport.metrics || {}).map(([metricName, m]) => {
+                          const isNa = m.na || m.mean === null || m.mean === undefined;
+                          const ciLow = m.ci_lower ?? m.ci_low;
+                          const ciHigh = m.ci_upper ?? m.ci_high;
+                          return (
+                            <tr key={metricName} className="hover:bg-slate/20">
+                              <td className="py-2 px-3 font-bold text-fg">{metricName}</td>
+                              <td className="py-2 px-3 text-right font-mono">
+                                {isNa ? (
+                                  <span className="px-2 py-0.5 rounded text-[10px] bg-slate/80 border border-graphite text-muted font-normal">
+                                    n/a ({m.reason || "not_computed"})
+                                  </span>
+                                ) : (
+                                  <span>
+                                    {m.mean!.toFixed(4)}
+                                    {m.precision_ceiling !== undefined && (
+                                      <span className="text-muted ml-2 text-[10px]">
+                                        (ceiling: {m.precision_ceiling.toFixed(4)})
+                                      </span>
+                                    )}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-2 px-3 font-mono text-muted">
+                                {isNa || ciLow === null || ciLow === undefined ? (
+                                  <span className="text-muted/40">—</span>
+                                ) : (
+                                  `[${ciLow.toFixed(4)}, ${ciHigh!.toFixed(4)}]`
+                                )}
+                              </td>
+                              <td className="py-2 px-3 text-center font-mono text-muted/80">
+                                {m.slice_size !== undefined ? `${m.n} / ${m.slice_size}` : m.n}
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
                 </div>
+
+                {/* Route Classification Confusion Matrix */}
+                {runReport.confusion_matrix && (() => {
+                  const cm = runReport.confusion_matrix;
+                  return (
+                    <div className="bg-carbon rounded-lg border border-graphite p-4 space-y-3">
+                      <div className="flex items-center justify-between border-b border-graphite/40 pb-2">
+                        <div className="text-[11px] font-bold text-fg uppercase tracking-wider text-muted/70">
+                          Route Classification Confusion Matrix (Accuracy: {(cm.accuracy * 100).toFixed(1)}%, n = {cm.n})
+                        </div>
+                        <span className="text-[10px] text-muted">Expected vs Router Decision (Dry-Run on Every Item)</span>
+                      </div>
+                      <div className="overflow-x-auto border border-graphite/50 rounded">
+                        <table className="w-full text-center border-collapse text-[11px]">
+                          <thead className="bg-slate/50 text-muted border-b border-graphite">
+                            <tr>
+                              <th className="py-1.5 px-3 text-left">Expected \ Predicted</th>
+                              {cm.routes.map((r) => (
+                                <th key={r} className="py-1.5 px-3 font-mono uppercase">{r}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-graphite/30">
+                            {cm.routes.map((exp) => (
+                              <tr key={exp} className="hover:bg-slate/20">
+                                <td className="py-1.5 px-3 text-left font-bold text-fg capitalize">{exp}</td>
+                                {cm.routes.map((pred) => {
+                                  const count = cm.matrix[exp]?.[pred] || 0;
+                                  const isDiag = exp === pred;
+                                  return (
+                                    <td
+                                      key={pred}
+                                      className={`py-1.5 px-3 font-mono ${
+                                        isDiag && count > 0
+                                          ? "text-emerald font-bold bg-emerald/10"
+                                          : count > 0
+                                          ? "text-crimson font-bold bg-crimson/10"
+                                          : "text-muted/40"
+                                      }`}
+                                    >
+                                      {count}
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Latency Breakdown & Route Slices */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1036,29 +1451,36 @@ export default function EvaluationPage() {
                   )}
 
                   {/* Route Slices Breakdown */}
-                  {runReport.route_slices && (
+                  {(runReport.slices || runReport.route_slices) && (
                     <div className="bg-carbon rounded-lg border border-graphite p-4 space-y-3">
                       <div className="text-[11px] font-bold text-fg uppercase tracking-wider text-muted/70">Route Slices Performance Breakdown</div>
                       <table className="w-full text-left border-collapse text-[11px]">
                         <thead className="bg-slate/50 text-muted border-b border-graphite">
                           <tr>
                             <th className="py-1.5 px-3">Route</th>
-                            <th className="py-1.5 px-3 text-center">n</th>
+                            <th className="py-1.5 px-3 text-center">Slice Size</th>
                             <th className="py-1.5 px-3 text-right">Recall@5</th>
                             <th className="py-1.5 px-3 text-right">Hit@5</th>
                             <th className="py-1.5 px-3 text-right">MRR</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-graphite/30">
-                          {Object.entries(runReport.route_slices).map(([route, sl]) => (
-                            <tr key={route} className="hover:bg-slate/20">
-                              <td className="py-1.5 px-3 font-bold text-electric">{route}</td>
-                              <td className="py-1.5 px-3 text-center font-mono">{sl.count}</td>
-                              <td className="py-1.5 px-3 text-right font-mono">{sl.recall_mean.toFixed(4)}</td>
-                              <td className="py-1.5 px-3 text-right font-mono">{sl.hit_mean.toFixed(4)}</td>
-                              <td className="py-1.5 px-3 text-right font-mono">{sl.mrr_mean.toFixed(4)}</td>
-                            </tr>
-                          ))}
+                          {Object.entries((runReport as any).slices || runReport.route_slices || {}).map(([route, sl]: [string, any]) => {
+                            const sz = sl.slice_size ?? sl.count ?? sl.n ?? 0;
+                            const rMetrics = sl.metrics || {};
+                            const recMean = rMetrics["recall@5"]?.mean ?? sl.recall_mean;
+                            const hitMean = rMetrics["hit@5"]?.mean ?? sl.hit_mean;
+                            const mrrMean = rMetrics["mrr"]?.mean ?? sl.mrr_mean;
+                            return (
+                              <tr key={route} className="hover:bg-slate/20">
+                                <td className="py-1.5 px-3 font-bold text-electric">{route}</td>
+                                <td className="py-1.5 px-3 text-center font-mono">{sz}</td>
+                                <td className="py-1.5 px-3 text-right font-mono">{recMean !== undefined && recMean !== null ? Number(recMean).toFixed(4) : "n/a"}</td>
+                                <td className="py-1.5 px-3 text-right font-mono">{hitMean !== undefined && hitMean !== null ? Number(hitMean).toFixed(4) : "n/a"}</td>
+                                <td className="py-1.5 px-3 text-right font-mono">{mrrMean !== undefined && mrrMean !== null ? Number(mrrMean).toFixed(4) : "n/a"}</td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -1177,12 +1599,35 @@ export default function EvaluationPage() {
         {activeTab === "compare" && (
           <div className="space-y-6">
             <div className="bg-carbon rounded-lg border border-graphite p-6 space-y-4">
-              <div className="border-b border-graphite pb-3">
-                <h2 className="text-sm font-bold text-fg flex items-center gap-2">
-                  <GitCompare className="w-4 h-4 text-electric" />
-                  <span>Paired Bootstrap Comparison (2,000 Resamples, 95% CI)</span>
-                </h2>
-                <p className="text-muted text-[11px] mt-1">Rigorous non-parametric paired differences across common benchmark items.</p>
+              <div className="flex flex-wrap items-center justify-between gap-4 border-b border-graphite pb-3">
+                <div>
+                  <h2 className="text-sm font-bold text-fg flex items-center gap-2">
+                    <GitCompare className="w-4 h-4 text-electric" />
+                    <span>Paired Bootstrap Comparison (2,000 Resamples, 95% CI)</span>
+                  </h2>
+                  <p className="text-muted text-[11px] mt-1">Rigorous non-parametric paired differences across common benchmark items.</p>
+                </div>
+
+                {/* Split Filter */}
+                <div className="flex items-center gap-1 bg-slate/60 p-1 rounded border border-graphite">
+                  <span className="text-[10px] text-muted px-1.5 font-bold uppercase">Split:</span>
+                  {(["all", "dev", "holdout"] as const).map((sp) => (
+                    <button
+                      key={sp}
+                      onClick={() => {
+                        setCompareSplit(sp);
+                        handleCompare(sp);
+                      }}
+                      className={`px-2 py-0.5 rounded text-[10px] font-mono uppercase transition-colors ${
+                        compareSplit === sp
+                          ? "bg-electric text-obsidian font-bold"
+                          : "text-muted hover:text-fg"
+                      }`}
+                    >
+                      {sp}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* Selector */}
@@ -1218,7 +1663,7 @@ export default function EvaluationPage() {
                 </div>
 
                 <button
-                  onClick={handleCompare}
+                  onClick={() => handleCompare()}
                   disabled={loadingCompare || !compareRunA || !compareRunB || compareRunA === compareRunB}
                   className="py-2 px-4 bg-electric hover:bg-electric/90 text-obsidian font-bold rounded flex items-center justify-center gap-2 transition-colors disabled:opacity-50 text-xs"
                 >
@@ -1235,12 +1680,15 @@ export default function EvaluationPage() {
                   <div className="text-xs text-muted">
                     Comparing Run #{compareResult.run_a} vs Run #{compareResult.run_b} on{" "}
                     <strong className="text-fg">{compareResult.common_items_count}</strong> common items
+                    {compareResult.split && (
+                      <span className="ml-2 font-mono text-electric uppercase">({compareResult.split} split)</span>
+                    )}
                   </div>
                 </div>
 
+                {/* Overall Metrics Comparisons */}
                 <div className="space-y-4">
                   {Object.entries(compareResult.metrics || {}).map(([metricName, comp]) => {
-                    const crossesZero = comp.delta_ci_lower <= 0 && comp.delta_ci_upper >= 0;
                     const isGain = comp.delta_ci_lower > 0;
                     const isLoss = comp.delta_ci_upper < 0;
 
@@ -1311,8 +1759,379 @@ export default function EvaluationPage() {
                     );
                   })}
                 </div>
+
+                {/* Per-Route Slice Paired Comparisons */}
+                {compareResult.route_slices && Object.keys(compareResult.route_slices).length > 0 && (
+                  <div className="border-t border-graphite pt-4 space-y-4">
+                    <div className="text-xs font-bold text-fg uppercase tracking-wider text-muted/70">
+                      Per-Route Slice Paired Comparisons
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {Object.entries(compareResult.route_slices).map(([rt, sliceData]) => (
+                        <div key={rt} className="bg-obsidian rounded-lg border border-graphite p-4 space-y-3">
+                          <div className="flex items-center justify-between border-b border-graphite/40 pb-2">
+                            <span className="font-bold text-electric text-xs uppercase">Route Slice: {rt}</span>
+                            <span className="text-[10px] font-mono text-muted">n = {sliceData.n}</span>
+                          </div>
+                          <div className="space-y-2">
+                            {Object.entries(sliceData.metrics || {}).map(([mk, mComp]) => (
+                              <div key={mk} className="flex items-center justify-between text-[11px] font-mono">
+                                <span className="text-muted">{mk}:</span>
+                                <div className="flex items-center gap-2">
+                                  <span className={mComp.delta_mean >= 0 ? "text-emerald" : "text-crimson"}>
+                                    {mComp.delta_mean >= 0 ? "+" : ""}{mComp.delta_mean.toFixed(4)}
+                                  </span>
+                                  <span className="text-[10px] text-muted/70">
+                                    [{mComp.delta_ci_lower.toFixed(3)}, {mComp.delta_ci_upper.toFixed(3)}]
+                                  </span>
+                                  <span className={`px-1.5 py-0.2 rounded text-[9px] uppercase font-bold ${
+                                    mComp.verdict === "win" ? "bg-emerald/20 text-emerald" : mComp.verdict === "loss" ? "bg-crimson/20 text-crimson" : "bg-slate text-muted"
+                                  }`}>
+                                    {mComp.verdict}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
+          </div>
+        )}
+
+        {/* ==================================================================== */}
+        {/* TAB 5: GOLD SET BUILDER */}
+        {/* ==================================================================== */}
+        {activeTab === "builder" && (
+          <div className="space-y-6">
+            {/* Header / Selectors */}
+            <div className="bg-carbon rounded-lg border border-graphite p-6 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-4 border-b border-graphite pb-3">
+                <div>
+                  <h2 className="text-sm font-bold text-fg flex items-center gap-2">
+                    <PenTool className="w-4 h-4 text-electric" />
+                    <span>Gold Set Builder</span>
+                  </h2>
+                  <p className="text-muted text-[11px] mt-1">
+                    Select text inside ground-truth document pages or CSV rows to create verbatim expected spans with verified offsets.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-[11px] text-muted mb-1">Target Evaluation Suite</label>
+                  <select
+                    value={builderSuiteId || ""}
+                    onChange={(e) => setBuilderSuiteId(Number(e.target.value))}
+                    className="w-full bg-slate border border-graphite rounded px-3 py-2 text-fg text-xs focus:outline-none focus:border-electric"
+                  >
+                    {suites.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        Suite #{s.id}: {s.name} ({s.is_frozen ? "Frozen" : "Draft"})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-muted mb-1">Source Corpus</label>
+                  <select
+                    value={builderSourceId || ""}
+                    onChange={(e) => {
+                      const sid = Number(e.target.value);
+                      setBuilderSourceId(sid);
+                      loadTextUnits(sid, builderVersion, 1);
+                    }}
+                    className="w-full bg-slate border border-graphite rounded px-3 py-2 text-fg text-xs focus:outline-none focus:border-electric"
+                  >
+                    {sources.map((src) => (
+                      <option key={src.id} value={src.id}>
+                        Source #{src.id}: {src.name} ({src.source_type})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-end justify-between gap-2">
+                  <div className="flex-1">
+                    <label className="block text-[11px] text-muted mb-1">Unit Page / Offset</label>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          if (builderSourceId && builderPage > 1) {
+                            loadTextUnits(builderSourceId, builderVersion, builderPage - 1);
+                          }
+                        }}
+                        disabled={builderPage <= 1 || loadingUnits}
+                        className="px-2.5 py-1.5 bg-slate border border-graphite rounded text-fg text-xs disabled:opacity-40"
+                      >
+                        Prev
+                      </button>
+                      <span className="text-xs font-mono text-muted">
+                        Page {builderPage} / {Math.max(1, Math.ceil(totalUnits / 20))}
+                      </span>
+                      <button
+                        onClick={() => {
+                          if (builderSourceId && builderPage < Math.ceil(totalUnits / 20)) {
+                            loadTextUnits(builderSourceId, builderVersion, builderPage + 1);
+                          }
+                        }}
+                        disabled={builderPage >= Math.ceil(totalUnits / 20) || loadingUnits}
+                        className="px-2.5 py-1.5 bg-slate border border-graphite rounded text-fg text-xs disabled:opacity-40"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                  <span className="text-[11px] text-muted font-mono">{totalUnits} units total</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Validation Alert / Server Response */}
+            {builderValidationStatus && (
+              <div
+                className={`p-4 rounded-lg border text-xs flex items-start gap-3 ${
+                  builderValidationStatus.status === 201
+                    ? "bg-emerald/10 border-emerald/40 text-emerald"
+                    : builderValidationStatus.status === 409
+                    ? "bg-amber/10 border-amber/40 text-amber"
+                    : "bg-crimson/10 border-crimson/40 text-crimson"
+                }`}
+              >
+                {builderValidationStatus.status === 201 ? (
+                  <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                )}
+                <div className="space-y-1">
+                  <div className="font-bold">
+                    {builderValidationStatus.status === 201
+                      ? "201 Created — Verbatim Gold Span Verified"
+                      : builderValidationStatus.status === 409
+                      ? "409 Conflict — Suite is Frozen"
+                      : "422 Unprocessable Entity — Server Validation Failed"}
+                  </div>
+                  <p className="text-[11px] opacity-90">{builderValidationStatus.message}</p>
+                </div>
+              </div>
+            )}
+
+            {/* 2-Column Builder View */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Left Column: Units Browser & Span Selector */}
+              <div className="lg:col-span-7 space-y-4">
+                <div className="bg-carbon rounded-lg border border-graphite p-4 space-y-3">
+                  <div className="flex items-center justify-between border-b border-graphite pb-2">
+                    <span className="text-[11px] font-bold text-fg uppercase tracking-wider text-muted/70">
+                      Corpus Text Units ({textUnits.length} loaded)
+                    </span>
+                    <span className="text-[10px] text-muted">Click a unit to inspect text & highlight span</span>
+                  </div>
+
+                  {loadingUnits ? (
+                    <div className="py-8 text-center text-muted flex items-center justify-center gap-2">
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Loading stored text units...</span>
+                    </div>
+                  ) : textUnits.length === 0 ? (
+                    <div className="py-8 text-center text-muted">No text units found for this source.</div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto pr-1">
+                      {textUnits.map((u) => (
+                        <div
+                          key={u.unit_id}
+                          onClick={() => {
+                            setSelectedUnit(u);
+                            if (u.row_key) setBuilderRowKey(u.row_key);
+                          }}
+                          className={`p-2.5 rounded border text-xs cursor-pointer transition-all ${
+                            selectedUnit?.unit_id === u.unit_id
+                              ? "bg-slate border-electric text-fg shadow-sm"
+                              : "bg-obsidian/60 border-graphite/60 text-muted hover:border-graphite hover:text-fg"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between font-mono text-[10px] mb-1">
+                            <span className="text-electric truncate max-w-[120px]">{u.unit_id}</span>
+                            <span>{u.page_number !== undefined ? `Page ${u.page_number}` : u.row_key ? `Row ${u.row_key}` : u.source_type}</span>
+                          </div>
+                          <p className="line-clamp-2 text-[11px] font-sans text-fg/80">{u.text}</p>
+                          <div className="text-[10px] text-muted/70 mt-1 font-mono">
+                            {u.word_count} words • {u.char_count} chars
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Selected Unit Full Text & Selection Action */}
+                {selectedUnit && (
+                  <div className="bg-carbon rounded-lg border border-graphite p-4 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-graphite pb-2">
+                      <div>
+                        <span className="text-xs font-bold text-fg">Active Unit: <code className="text-electric">{selectedUnit.unit_id}</code></span>
+                        <span className="text-[10px] text-muted ml-2">
+                          ({selectedUnit.page_number !== undefined ? `Page ${selectedUnit.page_number}` : selectedUnit.row_key ? `Row Key: ${selectedUnit.row_key}` : selectedUnit.source_type})
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleCaptureSelection}
+                        className="py-1 px-3 bg-amber/20 hover:bg-amber/30 text-amber border border-amber/40 rounded flex items-center gap-1.5 text-xs font-semibold transition-colors"
+                      >
+                        <Crosshair className="w-3.5 h-3.5" />
+                        <span>Use Selection as Expected Span</span>
+                      </button>
+                    </div>
+
+                    <div className="text-[11px] text-muted mb-1">
+                      Highlight any text inside the box below, then click &quot;Use Selection as Expected Span&quot;:
+                    </div>
+
+                    <div
+                      className="p-3 bg-obsidian border border-graphite rounded font-mono text-xs text-fg leading-relaxed select-text cursor-text max-h-72 overflow-y-auto whitespace-pre-wrap"
+                      onMouseUp={handleCaptureSelection}
+                    >
+                      {selectedUnit.text}
+                    </div>
+
+                    {builderSelectedSpan && (
+                      <div className="p-2.5 rounded bg-amber/10 border border-amber/30 space-y-1">
+                        <div className="flex items-center justify-between text-[10px] text-amber font-bold">
+                          <span>Captured Verbatim Span ({builderSelectedSpan.length} characters):</span>
+                          <button
+                            type="button"
+                            onClick={() => setBuilderSelectedSpan("")}
+                            className="text-muted hover:text-fg text-[10px]"
+                          >
+                            Clear
+                          </button>
+                        </div>
+                        <p className="font-mono text-xs text-fg/90 bg-carbon p-2 rounded border border-graphite">
+                          &quot;{builderSelectedSpan}&quot;
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Right Column: Eval Item Authoring Form */}
+              <div className="lg:col-span-5">
+                <form onSubmit={handleCreateGoldItem} className="bg-carbon rounded-lg border border-graphite p-5 space-y-4">
+                  <div className="border-b border-graphite pb-2">
+                    <h3 className="text-xs font-bold text-fg flex items-center gap-2">
+                      <Bookmark className="w-4 h-4 text-electric" />
+                      <span>Author New Ground-Truth Item</span>
+                    </h3>
+                    <p className="text-[10px] text-muted mt-0.5">Enforces verbatim span verification on the server.</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] text-muted mb-1">Question / Prompt *</label>
+                    <textarea
+                      rows={2}
+                      value={builderQuestion}
+                      onChange={(e) => setBuilderQuestion(e.target.value)}
+                      placeholder="e.g. What is the total operating revenue for Q3 2024?"
+                      className="w-full bg-slate border border-graphite rounded px-3 py-2 text-fg text-xs focus:outline-none focus:border-electric"
+                      required
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] text-muted mb-1">Item Type</label>
+                      <select
+                        value={builderItemType}
+                        onChange={(e) => setBuilderItemType(e.target.value)}
+                        className="w-full bg-slate border border-graphite rounded px-2.5 py-1.5 text-fg text-xs focus:outline-none focus:border-electric"
+                      >
+                        <option value="answerable">answerable</option>
+                        <option value="unanswerable">unanswerable</option>
+                        <option value="structured">structured</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] text-muted mb-1">Expected Route</label>
+                      <select
+                        value={builderExpectedRoute}
+                        onChange={(e) => setBuilderExpectedRoute(e.target.value)}
+                        className="w-full bg-slate border border-graphite rounded px-2.5 py-1.5 text-fg text-xs focus:outline-none focus:border-electric"
+                      >
+                        <option value="semantic">semantic</option>
+                        <option value="exact">exact</option>
+                        <option value="hybrid">hybrid</option>
+                        <option value="structured">structured</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] text-muted mb-1">
+                      Expected Facts (Atomic: number, name, or &le;3 tokens, comma-separated)
+                    </label>
+                    <input
+                      type="text"
+                      value={builderFacts}
+                      onChange={(e) => setBuilderFacts(e.target.value)}
+                      placeholder="e.g. 42000, California, 14.2%"
+                      className="w-full bg-slate border border-graphite rounded px-3 py-1.5 text-fg text-xs font-mono focus:outline-none focus:border-electric"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] text-muted mb-1">Reference Answer / Target Value</label>
+                    <input
+                      type="text"
+                      value={builderReferenceAnswer}
+                      onChange={(e) => setBuilderReferenceAnswer(e.target.value)}
+                      placeholder="Canonical expected answer or numeric value"
+                      className="w-full bg-slate border border-graphite rounded px-3 py-1.5 text-fg text-xs focus:outline-none focus:border-electric"
+                    />
+                  </div>
+
+                  {selectedUnit?.row_key && (
+                    <div>
+                      <label className="block text-[11px] text-muted mb-1">Row Key (Record Primary Key)</label>
+                      <input
+                        type="text"
+                        value={builderRowKey}
+                        onChange={(e) => setBuilderRowKey(e.target.value)}
+                        className="w-full bg-slate border border-graphite rounded px-3 py-1.5 text-fg text-xs font-mono"
+                      />
+                    </div>
+                  )}
+
+                  <div className="p-3 bg-obsidian rounded border border-graphite space-y-1">
+                    <div className="text-[10px] text-muted font-bold uppercase">Evidence Attachment</div>
+                    <div className="text-[11px] text-fg">
+                      Unit ID: <span className="font-mono text-electric">{selectedUnit?.unit_id || "None selected"}</span>
+                    </div>
+                    <div className="text-[11px] text-fg truncate">
+                      Span: <span className="font-mono text-amber">{builderSelectedSpan ? `"${builderSelectedSpan}"` : "None"}</span>
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={savingItem || !builderSuiteId || !selectedUnit}
+                    className="w-full py-2.5 bg-electric hover:bg-electric/90 text-obsidian font-bold rounded flex items-center justify-center gap-2 transition-colors disabled:opacity-50 text-xs"
+                  >
+                    {savingItem ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                    <span>Save Ground-Truth Item (POST /eval/suites/{builderSuiteId || "..."}/items)</span>
+                  </button>
+                </form>
+              </div>
+            </div>
           </div>
         )}
       </div>

@@ -21,11 +21,16 @@ const config: Config = {
         carbon: "#111113",
         graphite: "#2A2A2E",
         slate: "#18181B",
+        locusBg: "#080808",
+        locusLime: "#C8F432",
       },
       fontFamily: {
         heading: ["var(--font-sora)", "sans-serif"],
         body: ["var(--font-inter)", "sans-serif"],
         mono: ["var(--font-mono)", "monospace"],
+        "locus-l": ["var(--font-locus-l)", "Niconne", "cursive"],
+        "locus-serif": ["var(--font-locus-serif)", "Instrument Serif", "Georgia", "serif"],
+        "locus-sans": ["var(--font-locus-sans)", "Satoshi", "sans-serif"],
       },
       borderRadius: {
         DEFAULT: "10px",

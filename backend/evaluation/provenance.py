@@ -94,6 +94,9 @@ def capture_provenance(
     suite_hash: str,
     variant: Optional[Dict[str, Any]] = None,
     index_run_ids: Optional[List[int]] = None,
+    ci_method: str = "percentile_bootstrap",
+    seed: int = 42,
+    B: int = 2000,
 ) -> Dict[str, Any]:
     """Capture full provenance metadata for an evaluation run."""
     commit, dirty, diff_sha256 = get_git_provenance()
@@ -115,6 +118,9 @@ def capture_provenance(
         "freshness_reference_date": os.getenv("FRESHNESS_REFERENCE_DATE", "none"),
         "index_run_ids": index_run_ids or [],
         "suite_hash": suite_hash,
+        "ci_method": ci_method,
+        "seed": seed,
+        "B": B,
         "numpy_version": versions.get("numpy", "n/a"),
         "torch_version": versions.get("torch", "n/a"),
         "sentence_transformers_version": versions.get("sentence_transformers", "n/a"),

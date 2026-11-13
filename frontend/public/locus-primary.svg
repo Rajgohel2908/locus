@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 180" width="240" height="180" fill="none">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Niconne&amp;display=swap');
+      @import url('https://api.fontshare.com/v2/css?f[]=satoshi@300,500&amp;display=swap');
+      .l-niconne {
+        font-family: 'Niconne', cursive;
+        font-weight: 400;
+        font-size: 52px;
+        fill: #FFFFFF;
+      }
+      .ocus-sans {
+        font-family: 'Satoshi', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        font-weight: 300;
+        letter-spacing: 0.22em;
+        font-size: 26px;
+        fill: #FFFFFF;
+      }
+      .tagline {
+        font-family: 'Satoshi', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        font-weight: 500;
+        letter-spacing: 0.25em;
+        font-size: 8px;
+        fill: #FFFFFF;
+        opacity: 0.65;
+      }
+    </style>
+  </defs>
+  <!-- Icon centered at x=120, y=42 -->
+  <g transform="translate(96, 18)">
+    <circle cx="24" cy="24" r="21.5" stroke="#FFFFFF" stroke-opacity="0.9" stroke-width="1" />
+    <circle cx="24" cy="24" r="11" stroke="#FFFFFF" stroke-opacity="0.4" stroke-width="0.5" />
+    <circle cx="24" cy="24" r="4" fill="#C8F432" />
+    <circle cx="24" cy="13" r="2" fill="#FFFFFF" />
+    <circle cx="35" cy="24" r="2" fill="#FFFFFF" />
+    <circle cx="24" cy="35" r="2" fill="#FFFFFF" />
+    <circle cx="13" cy="24" r="2" fill="#FFFFFF" />
+  </g>
+  <!-- Wordmark -->
+  <text x="64" y="122" class="l-niconne">L</text>
+  <text x="100" y="115" class="ocus-sans">OCUS</text>
+  <!-- Tagline -->
+  <text x="120" y="142" text-anchor="middle" class="tagline">TRAIN • EMBED • RETRIEVE</text>
+</svg>

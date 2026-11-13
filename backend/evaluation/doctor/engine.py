@@ -271,10 +271,31 @@ def verify_finding(db: Session, finding_id: int) -> Tuple[DoctorFinding, EvalRun
         db.refresh(finding)
         return finding, ver_run
 
+    # For D4 and D5: verification runs on holdout with a paired CI
+    eval_ids = common_ids
+    if finding.rule_id in ("D4", "D5"):
+        common_items = db.query(EvalItem).filter(EvalItem.id.in_(common_ids)).all()
+        item_type_map = {it.id: it.item_type for it in common_items}
+        item_split_map = {it.id: it.split for it in common_items}
+
+        holdout_ids = [iid for iid in common_ids if item_split_map.get(iid) == "holdout"]
+        n_un_ho = sum(1 for iid in holdout_ids if item_type_map.get(iid) == "unanswerable")
+        n_ans_ho = sum(1 for iid in holdout_ids if item_type_map.get(iid) == "answerable")
+
+        # Small-N labeled heuristic: fewer than 10 unanswerable or fewer than 15 answerable items
+        if n_un_ho < 10 or n_ans_ho < 15:
+            finding.status = "verified_inconclusive_small_n"
+            finding.verification_run_id = ver_run.id
+            db.commit()
+            db.refresh(finding)
+            return finding, ver_run
+
+        eval_ids = holdout_ids
+
     # Target comparison metric: recall@5 (or false_refusal if D4)
     target_metric = "false_refusal" if finding.rule_id == "D4" else "recall@5"
-    vals_orig = [float((res_orig[i].metrics or {}).get(target_metric, 0.0)) for i in common_ids]
-    vals_ver = [float((res_ver[i].metrics or {}).get(target_metric, 0.0)) for i in common_ids]
+    vals_orig = [float((res_orig[i].metrics or {}).get(target_metric, 0.0)) for i in eval_ids]
+    vals_ver = [float((res_ver[i].metrics or {}).get(target_metric, 0.0)) for i in eval_ids]
 
     comp = paired_bootstrap_comparison(vals_ver, vals_orig, n_resamples=2000, seed=42)
     ci_low = comp["ci_low"]

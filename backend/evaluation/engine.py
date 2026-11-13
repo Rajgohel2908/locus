@@ -314,11 +314,289 @@ def clone_eval_suite(db: Session, suite_id: int, new_name: str) -> EvalSuite:
             expected_route=item.expected_route,
             origin=item.origin,
             reviewed=item.reviewed,
+            split=item.split,
             tags=item.tags,
         )
         db.add(new_item)
     db.commit()
     return new_suite
+
+
+def _update_suite_hash(db: Session, suite_id: int):
+    suite = db.query(EvalSuite).filter(EvalSuite.id == suite_id).first()
+    if not suite:
+        return
+    all_items = db.query(EvalItem).filter(EvalItem.suite_id == suite_id).order_by(EvalItem.position).all()
+    item_dicts = [
+        {
+            "position": it.position,
+            "question": it.question,
+            "item_type": it.item_type,
+            "expected_facts": it.expected_facts,
+            "reference_answer": it.reference_answer,
+            "expected_evidence": it.expected_evidence,
+            "expected_value": it.expected_value,
+            "expected_route": it.expected_route,
+            "origin": it.origin,
+            "tags": it.tags,
+        }
+        for it in all_items
+    ]
+    suite.suite_hash = compute_suite_hash(item_dicts)
+    db.commit()
+
+
+def validate_item_spans_and_records(
+    db: Session,
+    source_ids: List[int],
+    expected_evidence: List[Dict[str, Any]],
+):
+    """
+    On item creation/update, verifies that:
+    1. Every expected_span occurs verbatim (after normalization) in the referenced unit/corpus.
+    2. Every row_key exists in active records for the suite's sources.
+    Otherwise raises HTTPException(status_code=422, detail=...).
+    """
+    if not expected_evidence:
+        return
+
+    docs = db.query(Document).filter(Document.source_id.in_(source_ids)).all() if source_ids else []
+    chunks = db.query(Chunk).filter(Chunk.source_id.in_(source_ids)).all() if source_ids else []
+    records = db.query(Record).filter(Record.source_id.in_(source_ids), Record.status == "active").all() if source_ids else []
+
+    active_row_keys = set()
+    for r in records:
+        active_row_keys.add(str(r.id))
+        if r.row_index is not None:
+            active_row_keys.add(str(r.row_index))
+        if isinstance(r.data, dict):
+            for v in r.data.values():
+                if isinstance(v, (str, int, float)):
+                    active_row_keys.add(str(v))
+
+    for ev in expected_evidence:
+        span = ev.get("span")
+        row_key = ev.get("row_key")
+
+        if span:
+            norm_span = normalize_text(span)
+            found = False
+            for ch in chunks:
+                if norm_span in normalize_text(ch.content or ""):
+                    found = True
+                    break
+            if not found:
+                for d in docs:
+                    if norm_span in normalize_text(d.content or ""):
+                        found = True
+                        break
+            if not found:
+                for r in records:
+                    if norm_span in normalize_text(str(r.data or "")):
+                        found = True
+                        break
+            if not found:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Validation failed: expected_span '{span}' does not occur verbatim in the referenced unit/corpus.",
+                )
+
+        if row_key:
+            if str(row_key) not in active_row_keys and len(records) > 0:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Validation failed: row_key '{row_key}' does not exist in active records.",
+                )
+
+
+def create_suite_item(
+    db: Session,
+    suite_id: int,
+    item_data: Dict[str, Any],
+) -> EvalItem:
+    """Create an item in a draft suite. 409 if frozen."""
+    suite = db.query(EvalSuite).filter(EvalSuite.id == suite_id).first()
+    if not suite:
+        raise HTTPException(status_code=404, detail=f"EvalSuite {suite_id} not found.")
+
+    if is_suite_frozen(db, suite_id):
+        raise HTTPException(
+            status_code=409,
+            detail=f"EvalSuite {suite_id} is frozen (runs already exist). Clone suite to edit.",
+        )
+
+    evidence = item_data.get("expected_evidence", [])
+    validate_item_spans_and_records(db, suite.source_ids or [], evidence)
+
+    start_pos = (
+        db.query(func.max(EvalItem.position))
+        .filter(EvalItem.suite_id == suite_id)
+        .scalar()
+        or 0
+    )
+
+    item = EvalItem(
+        suite_id=suite_id,
+        position=item_data.get("position", start_pos + 1),
+        question=item_data["question"].strip(),
+        item_type=item_data.get("item_type", "answerable"),
+        expected_facts=item_data.get("expected_facts", []),
+        reference_answer=item_data.get("reference_answer"),
+        expected_evidence=evidence,
+        expected_value=item_data.get("expected_value"),
+        expected_route=item_data.get("expected_route"),
+        origin=item_data.get("origin", "hand"),
+        reviewed=bool(item_data.get("reviewed", False)),
+        split=item_data.get("split"),
+        tags=item_data.get("tags", []),
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+
+    _update_suite_hash(db, suite_id)
+    return item
+
+
+def update_suite_item(
+    db: Session,
+    suite_id: int,
+    item_id: int,
+    item_data: Dict[str, Any],
+) -> EvalItem:
+    """Update an item in a draft suite. 409 if frozen."""
+    suite = db.query(EvalSuite).filter(EvalSuite.id == suite_id).first()
+    if not suite:
+        raise HTTPException(status_code=404, detail=f"EvalSuite {suite_id} not found.")
+
+    if is_suite_frozen(db, suite_id):
+        raise HTTPException(
+            status_code=409,
+            detail=f"EvalSuite {suite_id} is frozen (runs already exist). Clone suite to edit.",
+        )
+
+    item = db.query(EvalItem).filter(EvalItem.id == item_id, EvalItem.suite_id == suite_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail=f"EvalItem {item_id} not found in suite {suite_id}.")
+
+    evidence = item_data.get("expected_evidence", item.expected_evidence)
+    validate_item_spans_and_records(db, suite.source_ids or [], evidence)
+
+    if "question" in item_data:
+        item.question = item_data["question"].strip()
+    if "item_type" in item_data:
+        item.item_type = item_data["item_type"]
+    if "expected_facts" in item_data:
+        item.expected_facts = item_data["expected_facts"]
+    if "reference_answer" in item_data:
+        item.reference_answer = item_data["reference_answer"]
+    if "expected_evidence" in item_data:
+        item.expected_evidence = evidence
+    if "expected_value" in item_data:
+        item.expected_value = item_data["expected_value"]
+    if "expected_route" in item_data:
+        item.expected_route = item_data["expected_route"]
+    if "origin" in item_data:
+        item.origin = item_data["origin"]
+    if "reviewed" in item_data:
+        item.reviewed = bool(item_data["reviewed"])
+    if "split" in item_data:
+        item.split = item_data["split"]
+    if "tags" in item_data:
+        item.tags = item_data["tags"]
+    if "position" in item_data:
+        item.position = item_data["position"]
+
+    db.commit()
+    db.refresh(item)
+    _update_suite_hash(db, suite_id)
+    return item
+
+
+def delete_suite_item(
+    db: Session,
+    suite_id: int,
+    item_id: int,
+):
+    """Delete an item from a draft suite. 409 if frozen."""
+    suite = db.query(EvalSuite).filter(EvalSuite.id == suite_id).first()
+    if not suite:
+        raise HTTPException(status_code=404, detail=f"EvalSuite {suite_id} not found.")
+
+    if is_suite_frozen(db, suite_id):
+        raise HTTPException(
+            status_code=409,
+            detail=f"EvalSuite {suite_id} is frozen (runs already exist). Clone suite to edit.",
+        )
+
+    item = db.query(EvalItem).filter(EvalItem.id == item_id, EvalItem.suite_id == suite_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail=f"EvalItem {item_id} not found in suite {suite_id}.")
+
+    db.delete(item)
+    db.commit()
+    _update_suite_hash(db, suite_id)
+
+
+def split_eval_suite(
+    db: Session,
+    suite_id: int,
+    holdout_fraction: float = 0.3,
+    seed: int = 42,
+) -> Dict[str, Any]:
+    """
+    Deterministic hash-based split, stratified by item_type.
+    Allowed only before the first run (409 if frozen). Stored in eval_items.split.
+    """
+    if is_suite_frozen(db, suite_id):
+        raise HTTPException(
+            status_code=409,
+            detail=f"EvalSuite {suite_id} is frozen (runs already exist). Splitting is only allowed before the first run.",
+        )
+
+    suite = db.query(EvalSuite).filter(EvalSuite.id == suite_id).first()
+    if not suite:
+        raise HTTPException(status_code=404, detail=f"EvalSuite {suite_id} not found.")
+
+    items = db.query(EvalItem).filter(EvalItem.suite_id == suite_id).order_by(EvalItem.position, EvalItem.id).all()
+    if not items:
+        return {"suite_id": suite_id, "dev_count": 0, "holdout_count": 0, "total": 0}
+
+    by_type: Dict[str, List[EvalItem]] = {}
+    for it in items:
+        by_type.setdefault(it.item_type, []).append(it)
+
+    dev_count = 0
+    holdout_count = 0
+
+    for it_type, type_items in by_type.items():
+        def item_hash(it: EvalItem) -> str:
+            raw = f"{seed}:{it.id}:{it.position}:{it.question}"
+            return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+        sorted_items = sorted(type_items, key=item_hash)
+        N = len(sorted_items)
+        n_holdout = int(round(N * holdout_fraction))
+        if holdout_fraction > 0 and n_holdout == 0 and N >= 2:
+            n_holdout = 1
+
+        for idx, it in enumerate(sorted_items):
+            if idx < n_holdout:
+                it.split = "holdout"
+                holdout_count += 1
+            else:
+                it.split = "dev"
+                dev_count += 1
+
+    db.commit()
+    return {
+        "suite_id": suite_id,
+        "holdout_fraction": holdout_fraction,
+        "seed": seed,
+        "dev_count": dev_count,
+        "holdout_count": holdout_count,
+        "total": len(items),
+    }
 
 
 def lint_eval_suite(db: Session, suite_id: int) -> Dict[str, Any]:
@@ -455,6 +733,40 @@ def lint_eval_suite(db: Session, suite_id: int) -> Dict[str, Any]:
             if missing_facts:
                 failures.append(f"expected_facts_missing_in_matched_text: {', '.join(missing_facts)}")
 
+        # Check atomic facts: must be a number, a name, or at most 3 tokens
+        if it.expected_facts:
+            for fact in it.expected_facts:
+                fact_str = str(fact).strip()
+                tokens = fact_str.split()
+                is_num = False
+                try:
+                    float(fact_str.replace(",", "").replace("$", "").replace("%", ""))
+                    is_num = True
+                except ValueError:
+                    pass
+                if len(tokens) > 3 and not is_num:
+                    sugg = " ".join(tokens[:3])
+                    failures.append(
+                        f"fact_not_atomic: '{fact_str}' ({len(tokens)} tokens; expected atomic fact: a number, a name, or at most 3 tokens; suggestion: '{sugg}')"
+                    )
+
+        # Label Plausibility Lint: list answerable document items with expected_route "exact" as suspected label errors
+        is_doc_item = False
+        if it.expected_evidence:
+            for ev in it.expected_evidence:
+                if ev.get("document_title") or (ev.get("span") and not ev.get("row_key")):
+                    is_doc_item = True
+                    break
+        elif it.item_type == "answerable":
+            is_doc_item = True
+
+        suspected_label_error = False
+        if it.item_type == "answerable" and it.expected_route == "exact" and is_doc_item:
+            suspected_label_error = True
+            failures.append(
+                f"suspected_label_error: answerable document item (position {it.position}) has expected_route 'exact' (exact route is intended for row-key or structured lookups, not unstructured document text)"
+            )
+
         lint_failed = len(failures) > 0
         if lint_failed:
             total_failing += 1
@@ -466,15 +778,23 @@ def lint_eval_suite(db: Session, suite_id: int) -> Dict[str, Any]:
             "item_type": it.item_type,
             "lint_failed": lint_failed,
             "duplicate_question": is_dup,
+            "suspected_label_error": suspected_label_error,
             "span_checks": span_checks,
             "failures": failures,
         })
+
+    suspected_errors = [
+        {"item_id": itm["item_id"], "position": itm["position"], "question": itm["question"], "reason": "answerable document item with expected_route 'exact'"}
+        for itm in items_lint if itm.get("suspected_label_error")
+    ]
 
     return {
         "suite_id": suite.id,
         "suite_name": suite.name,
         "total_items": len(items),
         "lint_failed_count": total_failing,
+        "suspected_label_errors_count": len(suspected_errors),
+        "suspected_label_errors": suspected_errors,
         "items": items_lint,
     }
 
@@ -559,24 +879,6 @@ def execute_eval_run(
     run.started_at = run.started_at or datetime.utcnow()
     db.commit()
 
-    # Capture provenance
-    run.provenance = capture_provenance(
-        suite_hash=suite.suite_hash or "",
-        variant=run.variant or {},
-        index_run_ids=run.index_run_ids,
-    )
-    db.commit()
-
-    # Determine items to evaluate
-    items_query = db.query(EvalItem).filter(EvalItem.suite_id == run.suite_id)
-    if not run.include_unreviewed:
-        items_query = items_query.filter(EvalItem.reviewed.is_(True))
-    items = items_query.order_by(EvalItem.position).all()
-
-    total_items = len(items)
-    run.progress = {"total": total_items, "completed": 0, "status": "running"}
-    db.commit()
-
     # Resolve variant parameters
     var = run.variant or {}
     strategy = var.get("strategy", "dense")
@@ -598,6 +900,27 @@ def execute_eval_run(
     db.commit()
 
     resolved_index_runs_list = [int(v) for v in index_runs_map.values()]
+
+    # Capture provenance with resolved index_run_ids and CI parameters
+    run.provenance = capture_provenance(
+        suite_hash=suite.suite_hash or "",
+        variant=run.variant or {},
+        index_run_ids=resolved_index_runs_list,
+        ci_method="percentile_bootstrap",
+        seed=run.seed if run.seed is not None else 42,
+        B=2000,
+    )
+    db.commit()
+
+    # Determine items to evaluate
+    items_query = db.query(EvalItem).filter(EvalItem.suite_id == run.suite_id)
+    if not run.include_unreviewed:
+        items_query = items_query.filter(EvalItem.reviewed.is_(True))
+    items = items_query.order_by(EvalItem.position).all()
+
+    total_items = len(items)
+    run.progress = {"total": total_items, "completed": 0, "status": "running"}
+    db.commit()
 
     # Setup clients
     active_llm = llm_client
@@ -638,7 +961,17 @@ def execute_eval_run(
             item_llm_calls = 0
             item_judge_calls = 0
 
-            route_name = item.expected_route or "semantic"
+            # Dry-run the router for EVERY item independently of the retrieval strategy (zero cost)
+            predicted_route = None
+            try:
+                r_ctx = build_schema_context(db=db, source_ids=source_ids)
+                r_feats = extract_features(item.question.strip(), r_ctx)
+                r_dec = decide_route(r_feats)
+                predicted_route = r_dec.route
+            except Exception:
+                predicted_route = None
+
+            route_name = predicted_route or item.expected_route or "semantic"
             actual_strategy = strategy
             actual_answer = None
             actual_status = "retrieved"
@@ -647,27 +980,34 @@ def execute_eval_run(
             latency_ms = {}
 
             # 1. Structured Route Execution
-            if item.item_type == "structured" or strategy == "auto":
-                # Check router
-                context = build_schema_context(db=db, source_ids=source_ids)
-                features = extract_features(item.question, context)
-                decision = decide_route(features)
-                route_name = decision.route
+            # value_match is computed only when the structured path actually ran
+            # (strategy "auto" or a pipeline config with the router enabled);
+            # with an explicit retrieval strategy structured items are excluded with reason "router_bypassed".
+            p_cfg_router = False
+            if pipeline_config_id:
+                p_cfg = db.query(PipelineConfig).filter(PipelineConfig.id == pipeline_config_id).first()
+                if p_cfg and p_cfg.spec and p_cfg.spec.get("router_enabled"):
+                    p_cfg_router = True
 
-                if decision.route == "structured":
+            router_enabled_for_run = (strategy == "auto" or p_cfg_router)
+            structured_path_ran = False
+
+            if router_enabled_for_run and (item.item_type == "structured" or strategy == "auto"):
+                if predicted_route == "structured":
+                    structured_path_ran = True
                     t_struct_start = time.perf_counter()
                     try:
-                        table_schema = context.tables.get(features.target_source_id)
-                        if table_schema and features.aggregation_intent:
-                            op = features.aggregation_intent.op
-                            col = features.target_column
-                            grp = features.group_by_hint
-                            filts = [(f.column, f.value) for f in features.filter_values if f.source_id == features.target_source_id]
-                            template_req = "top_n" if features.row_identity_request else None
+                        table_schema = r_ctx.tables.get(r_feats.target_source_id)
+                        if table_schema and r_feats.aggregation_intent:
+                            op = r_feats.aggregation_intent.op
+                            col = r_feats.target_column
+                            grp = r_feats.group_by_hint
+                            filts = [(f.column, f.value) for f in r_feats.filter_values if f.source_id == r_feats.target_source_id]
+                            template_req = "top_n" if r_feats.row_identity_request else None
 
                             sv = (
                                 db.query(SourceVersion)
-                                .filter(SourceVersion.source_id == features.target_source_id, SourceVersion.is_current.is_(True))
+                                .filter(SourceVersion.source_id == r_feats.target_source_id, SourceVersion.is_current.is_(True))
                                 .first()
                             )
                             version_no = sv.version_no if sv else 1
@@ -681,7 +1021,7 @@ def execute_eval_run(
                                 filters=filts,
                                 version=version_no,
                                 template=template_req,
-                                top_n=features.top_n,
+                                top_n=r_feats.top_n,
                             )
                             rendered_ans = render_answer(exec_res)
                             t_struct_end = time.perf_counter()
@@ -698,6 +1038,10 @@ def execute_eval_run(
                     except Exception as e:
                         actual_status = "insufficient_evidence"
                         actual_answer = None
+            elif not router_enabled_for_run and item.item_type == "structured":
+                # Explicit retrieval strategy bypasses router
+                actual_status = "unsupported_route"
+                actual_answer = None
 
             # 2. Retrieval Pipeline Execution (Depth 20)
             if actual_answer is None and item.item_type != "structured":
@@ -705,6 +1049,14 @@ def execute_eval_run(
                     actual_strategy = "hybrid" if var.get("use_rerank") else "dense"
                 else:
                     actual_strategy = strategy
+
+                min_score = var.get("min_score")
+                if min_score is None and pipeline_config_id:
+                    p_cfg = db.query(PipelineConfig).filter(PipelineConfig.id == pipeline_config_id).first()
+                    if p_cfg and p_cfg.spec and "min_score" in p_cfg.spec:
+                        min_score = float(p_cfg.spec["min_score"])
+                if min_score is None:
+                    min_score = config.MIN_SCORE
 
                 chunks_pool, evidence, stage_latencies, _ = execute_pipeline(
                     db=db,
@@ -716,7 +1068,7 @@ def execute_eval_run(
                     filters=None,
                     top_k=20,  # Always fetch depth 20
                     candidates_n=max(20, config.CANDIDATES_N),
-                    min_score=config.MIN_SCORE,
+                    min_score=min_score,
                     min_bm25=config.MIN_BM25,
                     min_rerank=config.MIN_RERANK,
                 )
@@ -787,6 +1139,8 @@ def execute_eval_run(
                 route=route_name,
                 generate=run.generate,
                 llm_calls=item_llm_calls,
+                structured_path_ran=structured_path_ran,
+                predicted_route=predicted_route,
             )
 
             # 4. Optional LLM Judge
@@ -807,7 +1161,7 @@ def execute_eval_run(
                 run_id=run.id,
                 item_id=item.id,
                 query_id=None,
-                route=route_name,
+                route=predicted_route or route_name,
                 strategy=actual_strategy,
                 retrieved=safe_json(retrieved_data),
                 answer=actual_answer,
@@ -855,41 +1209,153 @@ def execute_eval_run(
     return run
 
 
-def generate_run_report(db: Session, run_id: int) -> Dict[str, Any]:
+def generate_run_report(db: Session, run_id: int, split: Optional[str] = "all") -> Dict[str, Any]:
     """
     Generate aggregated evaluation report with 95% bootstrap CIs,
     per-slice route breakdowns, and top failure classifications.
+    Supports split filtering ('dev', 'holdout', 'all').
+    Enforces 'UNMEASURED IS NOT ZERO': uncomputed metrics report as n/a with reason.
     """
     run = db.query(EvalRun).filter(EvalRun.id == run_id).first()
     if not run:
         raise HTTPException(status_code=404, detail=f"EvalRun {run_id} not found.")
 
-    results = db.query(EvalResult).filter(EvalResult.run_id == run_id).all()
+    items_q = db.query(EvalItem).filter(EvalItem.suite_id == run.suite_id)
+    results_q = db.query(EvalResult).filter(EvalResult.run_id == run_id)
+
+    if split in ("dev", "holdout"):
+        items_q = items_q.filter(EvalItem.split == split)
+        results_q = results_q.join(EvalItem, EvalResult.item_id == EvalItem.id).filter(EvalItem.split == split)
+
+    items = items_q.order_by(EvalItem.position).all()
+    results = results_q.all()
+
+    # Suite composition
+    item_type_counts: Dict[str, int] = {}
+    expected_route_counts: Dict[str, int] = {}
+    source_type_counts: Dict[str, int] = {"document": 0, "csv_row": 0}
+    answerable_by_route: Dict[str, int] = {}
+
+    for it in items:
+        item_type_counts[it.item_type] = item_type_counts.get(it.item_type, 0) + 1
+        rt = it.expected_route or "semantic"
+        expected_route_counts[rt] = expected_route_counts.get(rt, 0) + 1
+
+        is_csv = False
+        if it.expected_evidence:
+            for ev in it.expected_evidence:
+                if ev.get("row_key") or "csv" in str(ev.get("document_title", "")).lower():
+                    is_csv = True
+                    break
+        elif it.expected_value or it.expected_route == "structured":
+            is_csv = True
+
+        if is_csv:
+            source_type_counts["csv_row"] += 1
+        else:
+            source_type_counts["document"] += 1
+
+        if it.item_type == "answerable":
+            answerable_by_route[rt] = answerable_by_route.get(rt, 0) + 1
+
+    total_ans = sum(answerable_by_route.values())
+    skew_banner = None
+    if total_ans > 0:
+        for rt, cnt in answerable_by_route.items():
+            if cnt / total_ans > 0.60:
+                skew_banner = f"suite skewed toward {rt}; strategy comparisons reflect this mix"
+                break
+
+    composition = {
+        "total_items": len(items),
+        "split": split or "all",
+        "item_types": item_type_counts,
+        "expected_routes": expected_route_counts,
+        "source_types": source_type_counts,
+        "answerable_by_route": answerable_by_route,
+        "skew_banner": skew_banner,
+    }
+
     if not results:
         return {
             "run_id": run.id,
             "name": run.name,
             "status": run.status,
+            "generate": bool(run.generate),
+            "judge": bool(run.judge),
             "n": 0,
+            "composition": composition,
             "metrics": {},
             "slices": {},
             "failures": [],
         }
 
-    # Collect metric vectors
-    all_metric_keys = set()
+    # All standard metric keys
+    all_standard_keys = [
+        "hit@1", "hit@3", "hit@5", "hit@10",
+        "recall@1", "recall@3", "recall@5", "recall@10", "recall@20",
+        "precision@1", "precision@3", "precision@5", "precision@10",
+        "precision_norm@1", "precision_norm@3", "precision_norm@5", "precision_norm@10",
+        "context_precision_tokens@1", "context_precision_tokens@3", "context_precision_tokens@5", "context_precision_tokens@10",
+        "ndcg@1", "ndcg@3", "ndcg@5", "ndcg@10", "mrr",
+        "refusal_correct", "gate_pass_unanswerable", "unsafe_answer", "false_refusal",
+        "value_match", "route_accuracy",
+        "fact_recall", "answer_correct_strict", "citation_precision", "citation_recall", "invalid_citation_rate",
+        "faithfulness", "answer_relevance",
+    ]
+
+    # Collect any extra metric keys present in results (exclude metadata/string keys)
+    extra_keys = set()
     for r in results:
-        all_metric_keys.update((r.metrics or {}).keys())
+        extra_keys.update((r.metrics or {}).keys())
+
+    all_eval_keys = list(all_standard_keys)
+    for ek in sorted(extra_keys):
+        if ek not in all_eval_keys and not ek.endswith("_reason") and ek != "predicted_route":
+            sample_val = next((r.metrics[ek] for r in results if r.metrics and ek in r.metrics and r.metrics[ek] is not None), None)
+            if isinstance(sample_val, (int, float)) and not isinstance(sample_val, bool):
+                all_eval_keys.append(ek)
 
     aggregated_metrics: Dict[str, Any] = {}
-    for k in sorted(all_metric_keys):
-        vals = [
-            float(r.metrics[k])
-            for r in results
-            if r.metrics and k in r.metrics and r.metrics[k] is not None
-        ]
+    for k in all_eval_keys:
+        vals = []
+        for r in results:
+            if r.metrics and k in r.metrics and r.metrics[k] is not None:
+                v = r.metrics[k]
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    vals.append(float(v))
         if vals:
             aggregated_metrics[k] = bootstrap_ci(vals, n_resamples=2000, seed=run.seed)
+            aggregated_metrics[k]["na"] = False
+        else:
+            reason = "not_computed"
+            if k == "value_match":
+                struct_res = [r for r in results if (r.metrics or {}).get("value_match_reason") == "router_bypassed"]
+                if struct_res or (run.variant or {}).get("strategy") != "auto":
+                    reason = "router_bypassed"
+                elif item_type_counts.get("structured", 0) == 0:
+                    reason = "no_structured_items"
+                else:
+                    reason = "router_bypassed"
+            elif k in ("fact_recall", "answer_correct_strict", "citation_precision", "citation_recall", "invalid_citation_rate"):
+                reason = "retrieval_only" if not run.generate else "no_answers_generated"
+            elif k in ("faithfulness", "answer_relevance"):
+                reason = "judge_disabled" if not run.judge else "no_answers_to_judge"
+            elif k in ("refusal_correct", "gate_pass_unanswerable", "unsafe_answer"):
+                reason = "no_unanswerable_items"
+            elif k.startswith("recall") or k.startswith("precision") or k.startswith("hit") or k == "mrr" or k.startswith("ndcg") or k == "false_refusal":
+                reason = "no_answerable_items"
+            elif k == "route_accuracy":
+                reason = "no_items_with_expected_route"
+
+            aggregated_metrics[k] = {
+                "mean": None,
+                "ci_low": None,
+                "ci_high": None,
+                "n": 0,
+                "na": True,
+                "reason": reason,
+            }
 
     # Add latency aggregations
     for lat_key in ("total", "dense", "lexical", "rerank", "generate"):
@@ -903,13 +1369,28 @@ def generate_run_report(db: Session, run_id: int) -> Dict[str, Any]:
             aggregated_metrics[f"latency_{lat_key}_p50"] = {
                 "value": round(float(np.percentile(arr, 50)), 2),
                 "n": len(lat_vals),
+                "na": False,
             }
             aggregated_metrics[f"latency_{lat_key}_p95"] = {
                 "value": round(float(np.percentile(arr, 95)), 2),
                 "n": len(lat_vals),
+                "na": False,
+            }
+        else:
+            aggregated_metrics[f"latency_{lat_key}_p50"] = {
+                "value": None,
+                "n": 0,
+                "na": True,
+                "reason": "stage_not_executed",
+            }
+            aggregated_metrics[f"latency_{lat_key}_p95"] = {
+                "value": None,
+                "n": 0,
+                "na": True,
+                "reason": "stage_not_executed",
             }
 
-    # Slice breakdown by route
+    # Slice breakdown by route: include slice size and metric n
     slices: Dict[str, Dict[str, Any]] = {}
     routes = set(r.route for r in results if r.route)
     for rt in sorted(routes):
@@ -922,8 +1403,21 @@ def generate_run_report(db: Session, run_id: int) -> Dict[str, Any]:
                 if r.metrics and k in r.metrics and r.metrics[k] is not None
             ]
             if vals:
-                rt_metrics[k] = bootstrap_ci(vals, n_resamples=1000, seed=run.seed)
-        slices[rt] = {"n": len(rt_results), "metrics": rt_metrics}
+                ci_res = bootstrap_ci(vals, n_resamples=1000, seed=run.seed)
+                ci_res["slice_size"] = len(rt_results)
+                ci_res["na"] = False
+                rt_metrics[k] = ci_res
+            else:
+                rt_metrics[k] = {
+                    "mean": None,
+                    "ci_low": None,
+                    "ci_high": None,
+                    "n": 0,
+                    "slice_size": len(rt_results),
+                    "na": True,
+                    "reason": "no_metrics_in_slice",
+                }
+        slices[rt] = {"n": len(rt_results), "slice_size": len(rt_results), "metrics": rt_metrics}
 
     # Top failures categorization
     failures = []
@@ -932,19 +1426,23 @@ def generate_run_report(db: Session, run_id: int) -> Dict[str, Any]:
         reasons = []
 
         # 1. Gold missing from top-5 on answerable
-        if m.get("recall@5", 1.0) < 1.0 and m.get("hit@5", 1.0) == 0.0:
+        if m.get("recall@5", 1.0) is not None and m.get("recall@5", 1.0) < 1.0 and m.get("hit@5", 1.0) == 0.0:
             reasons.append("gold_missing_from_top_k")
 
         # 2. False refusal
-        if m.get("false_refusal", 0.0) > 0.0:
+        if m.get("false_refusal", 0.0) is not None and m.get("false_refusal", 0.0) > 0.0:
             reasons.append("false_refusal")
 
-        # 3. Unsafe answer
-        if m.get("unsafe_answer", 0.0) > 0.0:
-            reasons.append("unsafe_answer")
+        # 3. Unsafe answer / Gate passed on unanswerable
+        if not run.generate:
+            if m.get("unsafe_answer", 0.0) is not None and m.get("unsafe_answer", 0.0) > 0.0:
+                reasons.append("gate_passed_unanswerable")
+        else:
+            if m.get("unsafe_answer", 0.0) is not None and m.get("unsafe_answer", 0.0) > 0.0:
+                reasons.append("unsafe_answer")
 
         # 4. Bad citations
-        if m.get("invalid_citation_rate", 0.0) > 0.0:
+        if m.get("invalid_citation_rate", 0.0) is not None and m.get("invalid_citation_rate", 0.0) > 0.0:
             reasons.append("bad_citations")
 
         if reasons:
@@ -966,28 +1464,67 @@ def generate_run_report(db: Session, run_id: int) -> Dict[str, Any]:
         if "unsafe_answer" in aggregated_metrics:
             aggregated_metrics["gate_pass_unanswerable"] = aggregated_metrics["unsafe_answer"]
 
+    # Route Confusion Matrix: Expected vs Predicted Route
+    items_map = {it.id: it for it in items}
+    all_routes = ["exact", "semantic", "structured", "complex"]
+    for it in items:
+        if it.expected_route and it.expected_route not in all_routes:
+            all_routes.append(it.expected_route)
+    for r in results:
+        pred = (r.metrics or {}).get("predicted_route") or r.route
+        if pred and pred not in all_routes:
+            all_routes.append(pred)
+
+    conf_matrix: Dict[str, Dict[str, int]] = {exp: {pred: 0 for pred in all_routes} for exp in all_routes}
+    route_matches = 0
+    route_eval_total = 0
+    for r in results:
+        it = items_map.get(r.item_id)
+        if it and it.expected_route:
+            pred = (r.metrics or {}).get("predicted_route") or r.route
+            if pred and it.expected_route in conf_matrix:
+                if pred not in conf_matrix[it.expected_route]:
+                    conf_matrix[it.expected_route][pred] = 0
+                conf_matrix[it.expected_route][pred] += 1
+                route_eval_total += 1
+                if pred == it.expected_route:
+                    route_matches += 1
+
+    confusion_data = {
+        "routes": all_routes,
+        "matrix": conf_matrix,
+        "total_evaluated": route_eval_total,
+        "matches": route_matches,
+        "accuracy": round(route_matches / route_eval_total, 4) if route_eval_total > 0 else None,
+    }
+
     return {
         "run_id": run.id,
         "name": run.name,
         "status": run.status,
         "variant": run.variant,
         "generate": bool(run.generate),
+        "judge": bool(run.judge),
         "is_mock": is_mock,
         "include_unreviewed": run.include_unreviewed,
         "provenance": run.provenance,
         "n": len(results),
+        "composition": composition,
         "metrics": aggregated_metrics,
         "slices": slices,
         "failures": failures,
+        "confusion_matrix": confusion_data,
+        "route_confusion_matrix": confusion_data,
     }
 
 
-def generate_markdown_scorecard(db: Session, run_ids: List[int]) -> str:
+def generate_markdown_scorecard(db: Session, run_ids: List[int], split: str = "all") -> str:
     """
     Generate Markdown scorecard across multiple runs with provenance,
-    banners, metrics tables with CI and n, paired comparisons, and top failures.
+    suite composition, banners, metrics tables with CI and n (n/a with reason),
+    per-slice paired comparisons, and diagnostic failure summaries.
     """
-    reports = [generate_run_report(db, rid) for rid in run_ids]
+    reports = [generate_run_report(db, rid, split=split) for rid in run_ids]
     if not reports:
         return "# Evaluation Report\n\nNo valid runs specified."
 
@@ -1015,12 +1552,40 @@ def generate_markdown_scorecard(db: Session, run_ids: List[int]) -> str:
         metrics_compared_count = 5  # recall@5, precision@5, mrr, hit@5, false_refusal
         md.append(f"> [!NOTE]\n> **EXPLORATORY COMPARISONS:** Evaluated {metrics_compared_count} metric comparisons without multiple-testing correction (e.g. Bonferroni/FDR). Interpret exploratory deltas with caution.\n")
 
-    md.append("> [!IMPORTANT]\n> **LLM-JUDGED METRICS:** Faithfulness and Answer Relevance are **LLM-judged, uncalibrated**.\n")
+    # LLM-judged banner appears ONLY if judged metrics actually exist in the reports
+    has_judged = any(
+        (rep.get("judge", False) or
+         rep["metrics"].get("faithfulness", {}).get("n", 0) > 0 or
+         rep["metrics"].get("answer_relevance", {}).get("n", 0) > 0)
+        for rep in reports
+    )
+    if has_judged:
+        md.append("> [!IMPORTANT]\n> **LLM-JUDGED METRICS:** Faithfulness and Answer Relevance are **LLM-judged, uncalibrated**.\n")
+
+    # Suite Composition Section
+    md.append("## 1. Suite Composition & Balance\n")
+    for rep in reports:
+        comp = rep.get("composition", {})
+        md.append(f"### Run {rep['run_id']} ({rep['name']}) Suite Composition\n")
+        md.append(f"- **Total Items Evaluated:** {comp.get('total_items', rep.get('n', 0))} (Split: `{comp.get('split', split)}`)")
+        it_types = comp.get("item_types", {})
+        md.append(f"- **Item Types:** Answerable: {it_types.get('answerable', 0)}, Unanswerable: {it_types.get('unanswerable', 0)}, Structured: {it_types.get('structured', 0)}")
+        src_types = comp.get("source_types", {})
+        md.append(f"- **Source Types:** Document: {src_types.get('document', 0)}, CSV Row: {src_types.get('csv_row', 0)}")
+        routes = comp.get("expected_routes", {})
+        md.append(f"- **Expected Routes:** {', '.join(f'{k}: {v}' for k, v in routes.items()) if routes else 'None'}")
+        ans_routes = comp.get("answerable_by_route", {})
+        md.append(f"- **Answerable by Route:** {', '.join(f'{k}: {v}' for k, v in ans_routes.items()) if ans_routes else 'None'}")
+        if comp.get("skew_banner"):
+            md.append(f"\n> [!NOTE]\n> **SUITE SKEW (labeled heuristic):** {comp['skew_banner']}\n")
+        md.append("\n")
+
+    md.append("---\n")
 
     # Provenance Table
-    md.append("## 1. Provenance & Run Configuration\n")
-    md.append("| Run ID | Name | Strategy | Chunk Size | Top K | Git Commit | Dirty Tree | Diff SHA | Embedder (Used) | Reranker (Used) | Python | Suite Hash |")
-    md.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
+    md.append("## 2. Provenance & Run Configuration\n")
+    md.append("| Run ID | Name | Strategy | Chunk Size | Top K | Git Commit | Dirty Tree | Diff SHA | Embedder (Used) | Reranker (Used) | Python | Freshness Date | Index Run IDs | CI Method | Seed | B | Suite Hash |")
+    md.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :---: | :---: | :--- |")
     for rep in reports:
         var = rep.get("variant", {})
         prov = rep.get("provenance", {})
@@ -1029,16 +1594,24 @@ def generate_markdown_scorecard(db: Session, run_ids: List[int]) -> str:
         diff_sha = str(prov.get("diff_sha256", "n/a"))[:8]
         emb_used = "Yes" if prov.get("embedder_used", True) else "No"
         rerank_used = "Yes" if prov.get("reranker_used", False) else "No"
+        fresh_date = str(prov.get("freshness_reference_date", "none"))
+        idx_runs = str(prov.get("index_run_ids", []))
+        ci_method = str(prov.get("ci_method", "percentile_bootstrap"))
+        seed_val = str(prov.get("seed", 42))
+        b_val = str(prov.get("B", 2000))
         md.append(
             f"| {rep['run_id']} | {rep['name']} | {var.get('strategy', 'auto')} | "
             f"{var.get('chunk_size', 'default')} | {var.get('top_k', 5)} | "
             f"`{git_c}` | {dirty_str} | `{diff_sha}` | {prov.get('embedder', 'default')} ({emb_used}) | {prov.get('reranker', 'default')} ({rerank_used}) | "
-            f"{prov.get('python_version', '3.12')} | `{prov.get('suite_hash', 'n/a')}` |"
+            f"{prov.get('python_version', '3.12')} | `{fresh_date}` | `{idx_runs}` | `{ci_method}` | {seed_val} | {b_val} | `{prov.get('suite_hash', 'n/a')}` |"
         )
     md.append("\n---\n")
 
     # Metrics Table
-    md.append("## 2. Core Quantitative Metrics (95% Bootstrap CI)\n")
+    md.append("## 3. Core Quantitative Metrics (95% Bootstrap CI)\n")
+    all_gen = any(rep.get("generate", False) for rep in reports)
+    all_retrieval_only = all(not rep.get("generate", False) for rep in reports)
+
     display_keys = [
         "hit@1", "hit@3", "hit@5", "hit@10",
         "recall@1", "recall@3", "recall@5", "recall@10", "recall@20",
@@ -1046,11 +1619,26 @@ def generate_markdown_scorecard(db: Session, run_ids: List[int]) -> str:
         "precision_norm@1", "precision_norm@3", "precision_norm@5", "precision_norm@10",
         "context_precision_tokens@1", "context_precision_tokens@3", "context_precision_tokens@5", "context_precision_tokens@10",
         "ndcg@1", "ndcg@3", "ndcg@5", "ndcg@10", "mrr",
-        "refusal_correct", "gate_pass_unanswerable", "unsafe_answer", "false_refusal",
-        "value_match", "route_accuracy",
-        "fact_recall", "answer_correct_strict", "citation_precision", "citation_recall", "invalid_citation_rate",
-        "faithfulness", "answer_relevance",
+        "refusal_correct",
     ]
+
+    # In retrieval-only runs show only gate_pass_unanswerable; unsafe_answer only for generate runs
+    if all_retrieval_only:
+        display_keys.append("gate_pass_unanswerable")
+    elif all_gen:
+        display_keys.append("unsafe_answer")
+    else:
+        display_keys.extend(["gate_pass_unanswerable", "unsafe_answer"])
+
+    display_keys.extend(["false_refusal", "value_match", "route_accuracy"])
+
+    if any(rep.get("generate", False) for rep in reports):
+        display_keys.extend([
+            "fact_recall", "answer_correct_strict", "citation_precision", "citation_recall", "invalid_citation_rate"
+        ])
+
+    if has_judged:
+        display_keys.extend(["faithfulness", "answer_relevance"])
 
     header = "| Metric | " + " | ".join(f"Run {rep['run_id']} ({rep['name']})" for rep in reports) + " |"
     sep = "| :--- | " + " | ".join(":---:" for _ in reports) + " |"
@@ -1059,7 +1647,6 @@ def generate_markdown_scorecard(db: Session, run_ids: List[int]) -> str:
 
     for mk in display_keys:
         row_vals = []
-        has_any_val = False
         for rep in reports:
             effective_key = mk
             if not rep.get("generate", False) and mk == "unsafe_answer":
@@ -1068,29 +1655,28 @@ def generate_markdown_scorecard(db: Session, run_ids: List[int]) -> str:
                 effective_key = "unsafe_answer"
 
             m_data = rep["metrics"].get(effective_key)
-            if m_data and isinstance(m_data, dict) and "mean" in m_data:
-                has_any_val = True
+            if m_data and isinstance(m_data, dict) and m_data.get("mean") is not None:
                 mean = m_data["mean"]
                 ci_l = m_data["ci_low"]
                 ci_h = m_data["ci_high"]
                 n = m_data["n"]
 
-                # If raw precision, display ceiling next to raw precision
                 if mk in ("precision@1", "precision@3", "precision@5", "precision@10"):
                     k_str = mk.split("@")[1]
                     ceil_data = rep["metrics"].get(f"precision_ceiling@{k_str}")
-                    if ceil_data and isinstance(ceil_data, dict) and "mean" in ceil_data:
+                    if ceil_data and isinstance(ceil_data, dict) and ceil_data.get("mean") is not None:
                         ceil_val = ceil_data["mean"]
                         row_vals.append(f"{mean:.4f} `(ceiling: {ceil_val:.4f})` `[{ci_l:.4f}, {ci_h:.4f}]` *(n={n})*")
                     else:
                         row_vals.append(f"{mean:.4f} `[{ci_l:.4f}, {ci_h:.4f}]` *(n={n})*")
                 else:
                     row_vals.append(f"{mean:.4f} `[{ci_l:.4f}, {ci_h:.4f}]` *(n={n})*")
+            elif m_data and isinstance(m_data, dict) and m_data.get("na"):
+                row_vals.append(f"n/a `({m_data.get('reason', 'unmeasured')})`")
             else:
-                row_vals.append("—")
+                row_vals.append("n/a `(not_computed)`")
 
-        if has_any_val:
-            md.append(f"| **{mk}** | " + " | ".join(row_vals) + " |")
+        md.append(f"| **{mk}** | " + " | ".join(row_vals) + " |")
 
     # Latencies
     md.append("\n### Stage Latencies (p50 / p95)\n")
@@ -1099,48 +1685,72 @@ def generate_markdown_scorecard(db: Session, run_ids: List[int]) -> str:
     for stage in ("total", "dense", "lexical", "rerank", "generate"):
         row_vals = []
         for rep in reports:
-            p50 = rep["metrics"].get(f"latency_{stage}_p50", {}).get("value", "—")
-            p95 = rep["metrics"].get(f"latency_{stage}_p95", {}).get("value", "—")
-            row_vals.append(f"{p50} ms / {p95} ms")
+            m_p50 = rep["metrics"].get(f"latency_{stage}_p50", {})
+            m_p95 = rep["metrics"].get(f"latency_{stage}_p95", {})
+            if m_p50.get("na") or m_p50.get("value") is None:
+                row_vals.append(f"n/a `({m_p50.get('reason', 'stage_not_executed')})`")
+            else:
+                row_vals.append(f"{m_p50.get('value')} ms / {m_p95.get('value')} ms *(n={m_p50.get('n')})*")
         md.append(f"| **{stage}** | " + " | ".join(row_vals) + " |")
 
-    # Route Slices Breakdown
+    # Route Slices Breakdown: shows both slice size and n of each metric
     all_slices = set()
     for rep in reports:
         all_slices.update(rep.get("slices", {}).keys())
 
     if all_slices:
         md.append("\n### Route Slices Breakdown\n")
-        md.append("| Route | Run | Items (n) | Recall@5 (95% CI) | Hit@5 (95% CI) | Precision@5 | MRR |")
+        md.append("| Route | Run | Slice Size | Recall@5 (95% CI, n) | Hit@5 (95% CI, n) | Precision@5 (n) | MRR (n) |")
         md.append("| :--- | :--- | :---: | :---: | :---: | :---: | :---: |")
         for rt in sorted(all_slices):
             for rep in reports:
                 sl = rep.get("slices", {}).get(rt)
                 if sl:
-                    n_sl = sl["n"]
+                    n_sl = sl["slice_size"]
                     m = sl["metrics"]
                     r5 = m.get("recall@5", {})
-                    r5_str = f"{r5.get('mean', 0.0):.4f} `[{r5.get('ci_low', 0.0):.4f}, {r5.get('ci_high', 0.0):.4f}]`" if "mean" in r5 else "—"
+                    r5_str = f"{r5.get('mean', 0.0):.4f} `[{r5.get('ci_low', 0.0):.4f}, {r5.get('ci_high', 0.0):.4f}]` *(n={r5.get('n', 0)})*" if r5.get("mean") is not None else f"n/a `({r5.get('reason', 'unmeasured')})`"
                     h5 = m.get("hit@5", {})
-                    h5_str = f"{h5.get('mean', 0.0):.4f} `[{h5.get('ci_low', 0.0):.4f}, {h5.get('ci_high', 0.0):.4f}]`" if "mean" in h5 else "—"
+                    h5_str = f"{h5.get('mean', 0.0):.4f} `[{h5.get('ci_low', 0.0):.4f}, {h5.get('ci_high', 0.0):.4f}]` *(n={h5.get('n', 0)})*" if h5.get("mean") is not None else f"n/a `({h5.get('reason', 'unmeasured')})`"
                     p5 = m.get("precision@5", {})
-                    p5_str = f"{p5.get('mean', 0.0):.4f}" if "mean" in p5 else "—"
+                    p5_str = f"{p5.get('mean', 0.0):.4f} *(n={p5.get('n', 0)})*" if p5.get("mean") is not None else f"n/a `({p5.get('reason', 'unmeasured')})`"
                     mrr = m.get("mrr", {})
-                    mrr_str = f"{mrr.get('mean', 0.0):.4f}" if "mean" in mrr else "—"
+                    mrr_str = f"{mrr.get('mean', 0.0):.4f} *(n={mrr.get('n', 0)})*" if mrr.get("mean") is not None else f"n/a `({mrr.get('reason', 'unmeasured')})`"
                     md.append(f"| **{rt}** | Run {rep['run_id']} | {n_sl} | {r5_str} | {h5_str} | {p5_str} | {mrr_str} |")
+
+    # Route Confusion Matrix (Expected vs Predicted)
+    md.append("\n### Route Confusion Matrix (Expected vs Predicted)\n")
+    for rep in reports:
+        cdata = rep.get("route_confusion_matrix") or {}
+        r_list = cdata.get("routes", ["exact", "semantic", "structured", "complex"])
+        matrix = cdata.get("matrix", {})
+        acc = cdata.get("accuracy")
+        acc_str = f"{acc:.4f}" if acc is not None else "n/a"
+        md.append(f"#### Run {rep['run_id']} ({rep['name']}) — Route Accuracy: **{acc_str}** (Matches: {cdata.get('matches', 0)} / {cdata.get('total_evaluated', 0)})\n")
+        header_cols = ["Expected \\ Predicted"] + [f"`{r}`" for r in r_list] + ["Total", "Accuracy"]
+        md.append("| " + " | ".join(header_cols) + " |")
+        md.append("| :--- | " + " | ".join(":---:" for _ in r_list) + " | :---: | :---: |")
+        for exp in r_list:
+            row_counts = matrix.get(exp, {})
+            row_total = sum(row_counts.get(pred, 0) for pred in r_list)
+            matches_exp = row_counts.get(exp, 0)
+            row_acc = f"{matches_exp / row_total:.4f}" if row_total > 0 else "—"
+            vals_str = " | ".join(str(row_counts.get(pred, 0)) for pred in r_list)
+            md.append(f"| **`{exp}`** | {vals_str} | **{row_total}** | {row_acc} |")
+        md.append("\n")
 
     # Paired Comparisons (if 2 runs)
     if len(reports) >= 2:
         md.append("\n---\n")
-        md.append("## 3. Paired Comparisons (Variant A vs Variant B)\n")
+        md.append("## 4. Paired Comparisons (Variant A vs Variant B)\n")
         run_a_id = reports[0]["run_id"]
         run_b_id = reports[1]["run_id"]
-        comp_md = generate_paired_comparison_md(db, run_a_id, run_b_id)
+        comp_md = generate_paired_comparison_md(db, run_a_id, run_b_id, split=split)
         md.append(comp_md)
 
     # Diagnostic Failures Summary
     md.append("\n---\n")
-    md.append("## 4. Diagnostic Failures Summary\n")
+    md.append("## 5. Diagnostic Failures Summary\n")
     for rep in reports:
         fails = rep.get("failures", [])
         md.append(f"### Run {rep['run_id']} ({rep['name']}) — Total Failures: {len(fails)}\n")
@@ -1155,23 +1765,28 @@ def generate_markdown_scorecard(db: Session, run_ids: List[int]) -> str:
 
     return "\n".join(md)
 
-    return "\n".join(md)
 
+def generate_paired_comparison_md(db: Session, run_a_id: int, run_b_id: int, split: str = "all") -> str:
+    """Compute paired delta comparisons for two runs overall and per route slice."""
+    res_a_q = db.query(EvalResult).filter(EvalResult.run_id == run_a_id)
+    res_b_q = db.query(EvalResult).filter(EvalResult.run_id == run_b_id)
 
-def generate_paired_comparison_md(db: Session, run_a_id: int, run_b_id: int) -> str:
-    """Compute paired delta comparisons for two runs."""
-    res_a = db.query(EvalResult).filter(EvalResult.run_id == run_a_id).all()
-    res_b = db.query(EvalResult).filter(EvalResult.run_id == run_b_id).all()
+    if split in ("dev", "holdout"):
+        res_a_q = res_a_q.join(EvalItem, EvalResult.item_id == EvalItem.id).filter(EvalItem.split == split)
+        res_b_q = res_b_q.join(EvalItem, EvalResult.item_id == EvalItem.id).filter(EvalItem.split == split)
+
+    res_a = res_a_q.all()
+    res_b = res_b_q.all()
 
     map_a = {r.item_id: r for r in res_a}
     map_b = {r.item_id: r for r in res_b}
     common_item_ids = sorted(set(map_a.keys()) & set(map_b.keys()))
 
     if not common_item_ids:
-        return "No common items between the two runs."
+        return f"No common items between the two runs for split='{split}'."
 
     metrics_to_compare = ["recall@5", "precision@5", "mrr", "hit@5", "false_refusal"]
-    md = [f"Paired evaluation over **{len(common_item_ids)} common items**:\n"]
+    md = [f"Overall paired evaluation (split: `{split}`; metrics evaluated strictly over applicable items):\n"]
     md.append("| Metric | Mean A | Mean B | Mean Δ (A - B) | 95% Paired CI | W / L / T | Verdict |")
     md.append("| :--- | :---: | :---: | :---: | :---: | :---: | :--- |")
 
@@ -1181,7 +1796,7 @@ def generate_paired_comparison_md(db: Session, run_a_id: int, run_b_id: int) -> 
         for iid in common_item_ids:
             ma = map_a[iid].metrics or {}
             mb = map_b[iid].metrics or {}
-            if mk in ma and mk in mb:
+            if mk in ma and mk in mb and ma[mk] is not None and mb[mk] is not None:
                 vals_a.append(float(ma[mk]))
                 vals_b.append(float(mb[mk]))
 
@@ -1190,8 +1805,30 @@ def generate_paired_comparison_md(db: Session, run_a_id: int, run_b_id: int) -> 
             ci_str = f"[{comp['ci_low']:.4f}, {comp['ci_high']:.4f}]"
             wlt = f"{comp['wins']} / {comp['losses']} / {comp['ties']}"
             md.append(
-                f"| **{mk}** | {comp['mean_a']:.4f} | {comp['mean_b']:.4f} | "
+                f"| **{mk}** *(n={len(vals_a)})* | {comp['mean_a']:.4f} | {comp['mean_b']:.4f} | "
                 f"{comp['mean_delta']:+.4f} | `{ci_str}` | {wlt} | {comp['verdict']} |"
             )
+
+    # Per route slice paired comparisons
+    route_to_items: Dict[str, List[int]] = {}
+    for iid in common_item_ids:
+        rt = map_a[iid].route or "semantic"
+        route_to_items.setdefault(rt, []).append(iid)
+
+    if len(route_to_items) > 1:
+        md.append("\n### Paired Comparisons per Route Slice\n")
+        for rt, slice_iids in sorted(route_to_items.items()):
+            n_slice = len(slice_iids)
+            md.append(f"\n#### Route Slice `{rt}` (n = {n_slice}):\n")
+            md.append("| Metric | Mean A | Mean B | Mean Δ (A - B) | 95% Paired CI | W / L / T | Verdict |")
+            md.append("| :--- | :---: | :---: | :---: | :---: | :---: | :--- |")
+            for mk in metrics_to_compare:
+                vals_a = [float(map_a[iid].metrics[mk]) for iid in slice_iids if mk in (map_a[iid].metrics or {}) and mk in (map_b[iid].metrics or {}) and map_a[iid].metrics[mk] is not None and map_b[iid].metrics[mk] is not None]
+                vals_b = [float(map_b[iid].metrics[mk]) for iid in slice_iids if mk in (map_a[iid].metrics or {}) and mk in (map_b[iid].metrics or {}) and map_a[iid].metrics[mk] is not None and map_b[iid].metrics[mk] is not None]
+                if vals_a:
+                    comp = paired_bootstrap_comparison(vals_a, vals_b, n_resamples=1000, seed=42)
+                    ci_str = f"[{comp['ci_low']:.4f}, {comp['ci_high']:.4f}]"
+                    wlt = f"{comp['wins']} / {comp['losses']} / {comp['ties']}"
+                    md.append(f"| **{mk}** *(n={len(vals_a)})* | {comp['mean_a']:.4f} | {comp['mean_b']:.4f} | {comp['mean_delta']:+.4f} | `{ci_str}` | {wlt} | {comp['verdict']} |")
 
     return "\n".join(md)

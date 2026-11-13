@@ -410,6 +410,7 @@ class EvalItem(Base):
     expected_route    = Column(Text, nullable=True)
     origin            = Column(Text, nullable=False, default="agent_drafted")
     reviewed          = Column(Boolean, nullable=False, default=False)
+    split             = Column(Text, nullable=True)  # 'dev' | 'holdout' | None
     tags              = Column(JSONB, nullable=False, default=list)
     created_at        = Column(DateTime, default=datetime.utcnow)
 
@@ -525,7 +526,7 @@ def init_db():
     Base.metadata.create_all(bind=engine)
 
     # Apply each SQL migration in order (all use IF NOT EXISTS / ON CONFLICT)
-    for fname in ("002_phase2.sql", "003_phase3.sql", "004_phase4.sql", "005_phase5.sql", "006_phase6.sql", "007_phase6b.sql", "008_phase7_eval.sql", "009_phase7_doctor.sql", "010_phase7_1.sql"):
+    for fname in ("002_phase2.sql", "003_phase3.sql", "004_phase4.sql", "005_phase5.sql", "006_phase6.sql", "007_phase6b.sql", "008_phase7_eval.sql", "009_phase7_doctor.sql", "010_phase7_1.sql", "011_phase8_1.sql"):
         migration_path = Path(__file__).parent / "migrations" / fname
         if migration_path.exists():
             sql = migration_path.read_text(encoding="utf-8-sig")

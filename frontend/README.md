@@ -1,14 +1,20 @@
-# Sift Frontend
+# LOCUS Frontend
 
-Modern, audited user interface for the **Sift Data Quality & Evidence-Gated RAG Studio**. Built with Next.js (App Router), TypeScript, Tailwind CSS, Lucide React, and Mermaid.
+**LOCUS — Place where knowledge lives. Train, embed, retrieve your files into RAG.**
+
+Built with Next.js 14 (App Router), TypeScript, Tailwind CSS, Framer Motion, and Lucide React.
+
+- **Brand**: LOCUS
+- **Tagline**: TRAIN &bull; EMBED &bull; RETRIEVE
+- **Color System**: Background `#080808`, White `#FFFFFF`, Lime Accent `#C8F432`
 
 ---
 
 ## 1. Quick Start
 
 ### Prerequisites
-- Node.js &ge; 18.x (verified on Node v25.7.0, npm 11.10.1)
-- Running Sift FastAPI Backend (`http://127.0.0.1:8000`)
+- Node.js &ge; 18.x
+- Running LOCUS Backend (`http://127.0.0.1:8000`)
 
 ### Installation & Run
 ```bash

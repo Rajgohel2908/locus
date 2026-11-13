@@ -192,7 +192,7 @@ export default function DoctorPage() {
           </div>
           <div>
             <h1 className="text-sm font-bold text-fg font-heading tracking-tight">RAG Doctor v1</h1>
-            <p className="text-[11px] text-muted">Automated failure diagnosis, counterfactual threshold sweeps & verified configuration patches</p>
+            <p className="text-[11px] text-muted">Automated failure diagnosis, counterfactual threshold sweeps & configuration patch verification</p>
           </div>
         </div>
 
@@ -357,8 +357,10 @@ export default function DoctorPage() {
                         {/* Finding Status Chip */}
                         <span
                           className={`px-2.5 py-0.5 rounded text-[10px] font-mono uppercase font-bold ${
-                            f.status === "verified_gain"
+                            f.status === "verified_gain" || f.status === "verified_improved"
                               ? "bg-emerald/20 text-emerald border border-emerald/50"
+                              : f.status === "verified_inconclusive_small_n"
+                              ? "bg-slate/80 text-muted border border-graphite text-slate-300"
                               : f.status === "verified_no_change"
                               ? "bg-slate text-muted border border-graphite"
                               : f.status === "verified_regression"
@@ -371,6 +373,7 @@ export default function DoctorPage() {
                               ? "bg-crimson/15 text-crimson"
                               : "bg-slate text-muted"
                           }`}
+                          title={f.status === "verified_inconclusive_small_n" ? "Holdout sample size too small (<10 unanswerable or <15 answerable) to claim improvement" : undefined}
                         >
                           {f.status}
                         </span>
@@ -515,8 +518,10 @@ export default function DoctorPage() {
                     {f.status.startsWith("verified_") && (
                       <div
                         className={`p-4 rounded-lg border text-xs space-y-2 ${
-                          f.status === "verified_gain"
+                          f.status === "verified_gain" || f.status === "verified_improved"
                             ? "bg-emerald/10 border-emerald/40 text-emerald"
+                            : f.status === "verified_inconclusive_small_n"
+                            ? "bg-slate/50 border-graphite text-muted"
                             : f.status === "verified_no_change"
                             ? "bg-slate/50 border-graphite text-muted"
                             : "bg-crimson/10 border-crimson/40 text-crimson"
@@ -526,6 +531,18 @@ export default function DoctorPage() {
                           <span>Verification Result: {f.status.replace("verified_", "").toUpperCase()}</span>
                           <span className="font-mono">Verification Run #{f.verification_run_id}</span>
                         </div>
+                        {f.status === "verified_inconclusive_small_n" && (
+                          <div className="p-2.5 rounded bg-carbon border border-graphite text-[11px] text-muted space-y-1">
+                            <div className="font-bold text-fg flex items-center gap-1.5">
+                              <AlertTriangle className="w-3.5 h-3.5 text-amber" />
+                              <span>Inconclusive Sample Size (labeled heuristic)</span>
+                            </div>
+                            <p>
+                              Holdout split has fewer than 10 unanswerable or fewer than 15 answerable items.
+                              Statistical power is insufficient to claim improvement or regression.
+                            </p>
+                          </div>
+                        )}
                         <p className="text-fg/90 text-[11px]">
                           Automated paired evaluation executed against patched pipeline configuration #{f.applied_config_id}.
                         </p>

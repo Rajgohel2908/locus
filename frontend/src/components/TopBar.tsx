@@ -41,9 +41,9 @@ export function TopBar() {
   return (
     <header className="h-16 border-b border-graphite bg-carbon/60 backdrop-blur-md px-8 flex items-center justify-between z-10 sticky top-0">
       <div className="flex items-center gap-3 text-xs text-muted font-mono">
-        <span className="text-fg font-medium">Sift Platform</span>
+        <span className="text-fg font-medium">LOCUS Platform</span>
         <span>/</span>
-        <span>Phases 1-6B Certified</span>
+        <span>Train &bull; Embed &bull; Retrieve</span>
       </div>
 
       <div className="flex items-center gap-4">

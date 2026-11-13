@@ -161,23 +161,50 @@ def put(path, **kwargs):
 def run_demo():
     # Model warm-up & latency check
     step("Warm-up & Embedder/Reranker Latency Measurement")
+    # Embedder timing
+    t_emb_imp0 = time.perf_counter()
     from indexing.embedder import get_embedder
-    from retrieval.rerank import get_reranker
+    t_emb_imp = round((time.perf_counter() - t_emb_imp0) * 1000, 2)
 
-    t_emb0 = time.perf_counter()
+    t_emb_load0 = time.perf_counter()
     embedder = get_embedder()
-    _ = embedder.embed_query("Annual leave policy entitlement")
-    emb_warm_ms = round((time.perf_counter() - t_emb0) * 1000, 2)
-    ok(f"Embedder warm call latency: {emb_warm_ms} ms (dim={embedder.dimension})")
+    t_emb_load = round((time.perf_counter() - t_emb_load0) * 1000, 2)
 
-    t_rr0 = time.perf_counter()
+    t_emb_inf1_0 = time.perf_counter()
+    _ = embedder.embed_query("Annual leave policy entitlement")
+    t_emb_inf1 = round((time.perf_counter() - t_emb_inf1_0) * 1000, 2)
+
+    t_emb_inf2_0 = time.perf_counter()
+    _ = embedder.embed_query("Annual leave policy entitlement")
+    t_emb_inf2 = round((time.perf_counter() - t_emb_inf2_0) * 1000, 2)
+
+    emb_first_call = round(t_emb_load + t_emb_inf1, 2)
+    info(f"Embedder (sentence-transformers/all-MiniLM-L6-v2):")
+    info(f"  * import: {t_emb_imp} ms | resolve/weight-load: {t_emb_load} ms | first-inference: {t_emb_inf1} ms")
+    ok(f"Embedder first call (includes model load): {emb_first_call} ms | second call: {t_emb_inf2} ms (dim={embedder.dimension})")
+
+    # Reranker timing
+    t_rr_imp0 = time.perf_counter()
+    from retrieval.rerank import get_reranker
+    t_rr_imp = round((time.perf_counter() - t_rr_imp0) * 1000, 2)
+
+    t_rr_load0 = time.perf_counter()
     reranker = get_reranker()
-    _ = reranker.rerank(
-        "HR annual leave policy",
-        [{"chunk_id": 1, "content": "Employees are entitled to 24 annual leave days.", "score": 0.5}],
-    )
-    rerank_warm_ms = round((time.perf_counter() - t_rr0) * 1000, 2)
-    ok(f"Cross-encoder reranker warm call latency: {rerank_warm_ms} ms")
+    t_rr_load = round((time.perf_counter() - t_rr_load0) * 1000, 2)
+
+    sample_cand = [{"chunk_id": 1, "content": "Employees are entitled to 24 annual leave days.", "score": 0.5}]
+    t_rr_inf1_0 = time.perf_counter()
+    _ = reranker.rerank("HR annual leave policy", sample_cand)
+    t_rr_inf1 = round((time.perf_counter() - t_rr_inf1_0) * 1000, 2)
+
+    t_rr_inf2_0 = time.perf_counter()
+    _ = reranker.rerank("HR annual leave policy", sample_cand)
+    t_rr_inf2 = round((time.perf_counter() - t_rr_inf2_0) * 1000, 2)
+
+    rr_first_call = round(t_rr_load + t_rr_inf1, 2)
+    info(f"Cross-encoder (cross-encoder/ms-marco-MiniLM-L-6-v2):")
+    info(f"  * import: {t_rr_imp} ms | resolve/weight-load: {t_rr_load} ms | first-inference: {t_rr_inf1} ms")
+    ok(f"Cross-encoder reranker first call (includes model load): {rr_first_call} ms | second call: {t_rr_inf2} ms")
 
     # STEP 1: Ingestion
     step("Step 1: Ingest HR Knowledge Base & Employees Messy CSV")
@@ -254,6 +281,11 @@ def run_demo():
     import_resp = post(f"/eval/suites/{suite_id}/items/import", json=items)
     ok(f"Imported {import_resp['imported_count']} benchmark items.")
 
+    # Partition into Dev / Holdout before freezing on first run
+    step("Step 5b: Deterministic Dev/Holdout Split (POST /eval/suites/{id}/split)")
+    split_resp = post(f"/eval/suites/{suite_id}/split", json={"holdout_fraction": 0.3, "seed": 42})
+    ok(f"Suite partitioned: dev={split_resp['dev_count']}, holdout={split_resp['holdout_count']}, total={split_resp['total']}")
+
     suite_obj = get(f"/eval/suites/{suite_id}")
     suite_hash = suite_obj.get("suite_hash")
     info(f"Suite Hash (reproducible SHA-256): {suite_hash}")
@@ -312,7 +344,8 @@ def run_demo():
         losses = comp["losses"]
         ties = comp["ties"]
         verdict = comp["verdict"]
-        print(f"  * {metric_name:<16}: delta={delta_mean:+.4f} (95% CI: [{ci_low:+.4f}, {ci_high:+.4f}]) | A wins={wins}, B wins={losses}, ties={ties}")
+        n_m = comp.get("n", wins + losses + ties)
+        print(f"  * {metric_name:<16} (n={n_m}): delta={delta_mean:+.4f} (95% CI: [{ci_low:+.4f}, {ci_high:+.4f}]) | A wins={wins}, B wins={losses}, ties={ties}")
         print(f"    Verdict: {verdict}")
 
     # STEP 8: Markdown Scorecard
@@ -346,14 +379,29 @@ def run_demo():
         print(f"    Proposed Patch: {json.dumps(f['proposed_patch'])}")
         print(f"    Expected Effect:{f['expected_effect']}")
         print(f"    Cost Note:      {f['cost_note']}")
-        if f.get("counterfactual") and f["counterfactual"].get("in_sample"):
+        if f.get("counterfactual"):
             cf = f["counterfactual"]
-            print(f"    Counterfactual: Optimal Threshold t={cf.get('optimal_threshold')}")
-            print(f"      In-Sample:    {json.dumps(cf.get('in_sample'))}")
-            print(f"      Leave-One-Out:{json.dumps(cf.get('leave_one_out'))}")
+            print(f"    Counterfactual Analysis:")
+            print(f"      Optimal Threshold:  t={cf.get('optimal_threshold')}")
+            in_s = cf.get("in_sample", {})
+            loo = cf.get("leave_one_out", {})
+            if in_s:
+                print(f"      In-Sample Effect:   unsafe {in_s.get('optimal_unsafe_count', in_s.get('proposed_unsafe_count'))}/{cf.get('n_unanswerable', in_s.get('n_unanswerable'))} (rate={in_s.get('optimal_unsafe_rate', in_s.get('proposed_unsafe_rate'))}), false refusals {in_s.get('optimal_false_refusal_count', in_s.get('proposed_false_refusal_count'))}/{cf.get('n_answerable', in_s.get('n_answerable'))} (rate={in_s.get('optimal_false_refusal_rate', in_s.get('proposed_false_refusal_rate'))})")
+            if loo:
+                print(f"      Leave-One-Out:      unsafe {loo.get('loo_unsafe_count')}/{cf.get('n_unanswerable')} (rate={loo.get('loo_unsafe_rate')}), false refusals {loo.get('loo_false_refusal_count')}/{cf.get('n_answerable')} (rate={loo.get('loo_false_refusal_rate')})")
+            sweep_data = cf.get("sweep_entries") or cf.get("sweep") or []
+            if sweep_data:
+                print(f"      Candidate Sweep (full {len(sweep_data)} thresholds):")
+                for sw in sweep_data:
+                    print(f"        t={sw['threshold']:6.4f}: unsafe={sw['unsafe_count']}/{sw['n_unanswerable']} (rate={sw['unsafe_rate']:.4f}), false_refusal={sw['false_refusal_count']}/{sw['n_answerable']} (rate={sw['false_refusal_rate']:.4f}), obj={sw['objective']:+.4f}")
             if cf.get("warnings"):
-                print(f"      Warnings:     {cf.get('warnings')}")
-            print(f"      Limitations:  {cf.get('limitations')}")
+                for w in cf["warnings"]:
+                    print(f"      Warning:            {w}")
+            if cf.get("limitations"):
+                print(f"      Limitations:        {cf['limitations']}")
+            if cf.get("holdout_effect"):
+                he = cf["holdout_effect"]
+                print(f"      Holdout Effect:     unsafe={he.get('holdout_unsafe_count')}/{he.get('holdout_n_unanswerable')}, false_refusal={he.get('holdout_false_refusal_count')}/{he.get('holdout_n_answerable')}")
         print("-" * 78)
 
     # Print Not-Fired Rules with Reasons
@@ -366,8 +414,9 @@ def run_demo():
         print("-" * 78)
 
     # STEP 10: Doctor Patch Lifecycle: Approve -> Apply -> Verify
-    step("Step 10: Doctor Patch Lifecycle (Approve -> Apply -> Verify)")
-    actionable_findings = [f for f in findings if f.get("proposed_patch") and f["status"] == "proposed"]
+    step("Step 10: Doctor Patch Lifecycle (Approve -> Apply -> Verify on Holdout)")
+    d_findings = [f for f in findings if f.get("rule_id") in ("D4", "D5") and f.get("proposed_patch") and f["status"] == "proposed"]
+    actionable_findings = d_findings if d_findings else [f for f in findings if f.get("proposed_patch") and f["status"] == "proposed"]
     if actionable_findings:
         chosen = actionable_findings[0]
         finding_id = chosen["id"]
@@ -384,12 +433,13 @@ def run_demo():
         info(f"  Spec: {json.dumps(new_cfg.get('spec'))}")
         info(f"  Spec Hash: {new_cfg.get('spec_hash')}")
 
-        # 3. Verify
-        info("Running verification evaluation on patched configuration...")
+        # 3. Verify on Holdout
+        info("Running verification evaluation on patched configuration against holdout split...")
         ver_res = post(f"/doctor/findings/{finding_id}/verify")
         ver_finding = ver_res.get("finding", {})
         ver_run = ver_res.get("verification_run", {})
-        ok(f"Verification completed (Run #{ver_run.get('id')}): status={BOLD}{ver_finding.get('status')}{RESET}")
+        ok(f"Verification completed (Run #{ver_run.get('id')} on holdout): status={BOLD}{ver_finding.get('status')}{RESET}")
+        info(f"Verdict: {ver_finding.get('status')}")
     else:
         info("No actionable patches proposed by Doctor rules for current configuration.")
 

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 40" width="160" height="40" fill="none">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Niconne&amp;display=swap');
+      @import url('https://api.fontshare.com/v2/css?f[]=satoshi@300&amp;display=swap');
+      .l-niconne {
+        font-family: 'Niconne', cursive;
+        font-weight: 400;
+        font-size: 38px;
+        fill: #FFFFFF;
+      }
+      .ocus-sans {
+        font-family: 'Satoshi', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        font-weight: 300;
+        letter-spacing: 0.22em;
+        font-size: 21px;
+        fill: #FFFFFF;
+      }
+    </style>
+  </defs>
+  <text x="2" y="32" class="l-niconne">L</text>
+  <text x="29" y="27" class="ocus-sans">OCUS</text>
+</svg>

@@ -130,7 +130,7 @@ def ensure_test_database(test_url: str = None) -> str:
     test_cur = test_conn.cursor()
 
     migrations_dir = backend_dir / "migrations"
-    migration_files = ["002_phase2.sql", "003_phase3.sql", "004_phase4.sql", "005_phase5.sql", "006_phase6.sql", "007_phase6b.sql", "008_phase7_eval.sql", "009_phase7_doctor.sql", "010_phase7_1.sql"]
+    migration_files = ["002_phase2.sql", "003_phase3.sql", "004_phase4.sql", "005_phase5.sql", "006_phase6.sql", "007_phase6b.sql", "008_phase7_eval.sql", "009_phase7_doctor.sql", "010_phase7_1.sql", "011_phase8_1.sql"]
 
     for fname in migration_files:
         mpath = migrations_dir / fname
