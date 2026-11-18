@@ -10,17 +10,17 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        obsidian: "#09090B",
+        obsidian: "#080808",
         absolute: "#050506",
-        electric: "#3B82F6",
+        electric: "#C8F432", // LOCUS signature Neon Lime accent
         emerald: "#22C55E",
         amber: "#F59E0B",
         crimson: "#EF4444",
         fg: "#FAFAFA",
         muted: "#A1A1AA",
-        carbon: "#111113",
-        graphite: "#2A2A2E",
-        slate: "#18181B",
+        carbon: "#0E0E10",
+        graphite: "#1E1E22",
+        slate: "#131316",
         locusBg: "#080808",
         locusLime: "#C8F432",
       },

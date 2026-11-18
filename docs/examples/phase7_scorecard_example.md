@@ -1,4 +1,4 @@
-# Sift Reproducible Evaluation Scorecard
+# LOCUS Reproducible Evaluation Scorecard
 
 > [!WARNING]
 > **sample KB, agent-drafted labels, exploratory, not evidence of quality**

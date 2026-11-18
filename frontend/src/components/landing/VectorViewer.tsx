@@ -2,7 +2,7 @@
 
 import { useState, useRef } from "react";
 import { motion, AnimatePresence, useInView } from "framer-motion";
-import { Search, FileStack, Hash, Braces } from "lucide-react";
+import { Search, FileStack, Hash, Braces, Sparkles } from "lucide-react";
 
 const vectors = [
   { id: "vec_001", text: "Final year project report...", source: "report.pdf p.2", score: 0.94, x: 15, y: 20 },
@@ -53,7 +53,7 @@ export default function VectorViewer() {
             initial={{ opacity: 0, y: 16 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
-            transition={{ duration: 0.5, ease: "easeOut" }}
+            transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
           >
             Your Vector Space, Visualized
           </motion.h2>
@@ -62,33 +62,33 @@ export default function VectorViewer() {
             initial={{ opacity: 0, y: 10 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
-            transition={{ duration: 0.5, ease: "easeOut", delay: 0.1 }}
+            transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1], delay: 0.08 }}
           >
             Hover any vector to see its source &amp; similarity
           </motion.p>
         </div>
 
-        {/* Viewer Card */}
+        {/* Viewer Card with Principle 11: Solid Drawing in 3D */}
         <motion.div
-          className="bg-[#0E0E0E] border border-white/[0.08] rounded-2xl md:rounded-3xl overflow-hidden"
+          className="bg-[#0E0E0E] border border-white/[0.08] rounded-2xl md:rounded-3xl overflow-hidden shadow-[0_30px_90px_rgba(0,0,0,0.85)] relative"
           initial={{ opacity: 0, y: 24 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
-          transition={{ duration: 0.5, ease: "easeOut", delay: 0.15 }}
+          transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1], delay: 0.12 }}
         >
           {/* Header Bar */}
-          <div className="flex items-center justify-between px-4 md:px-6 py-3 border-b border-white/[0.06]">
+          <div className="flex items-center justify-between px-4 md:px-6 py-3.5 border-b border-white/[0.06] bg-white/[0.01]">
             <div className="flex items-center gap-3">
               <span className="relative flex h-2.5 w-2.5">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#C8F432] opacity-50" />
                 <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[#C8F432]" />
               </span>
-              <span className="font-mono text-xs text-white/50 tracking-wide">
-                8 vectors&nbsp;&middot;&nbsp;1,234 dimensions&nbsp;&middot;&nbsp;Qdrant
+              <span className="font-mono text-xs text-white/60 tracking-wide">
+                8 vectors&nbsp;&middot;&nbsp;384 dimensions&nbsp;&middot;&nbsp;PostgreSQL pgvector
               </span>
             </div>
-            <span className="font-mono text-xs text-white/30 hidden sm:block">
-              cosine similarity
+            <span className="font-mono text-xs text-[#C8F432] hidden sm:block">
+              cosine distance &lt;=&gt;
             </span>
           </div>
 
@@ -97,188 +97,129 @@ export default function VectorViewer() {
             ref={canvasRef}
             className="relative h-[340px] md:h-[420px] bg-[#0A0A0A] overflow-hidden"
             style={{
-              backgroundImage:
-                "radial-gradient(circle, rgba(255,255,255,0.03) 1px, transparent 1px)",
-              backgroundSize: "28px 28px",
+              backgroundImage: `
+                radial-gradient(circle at 50% 50%, rgba(200, 244, 50, 0.035) 0%, transparent 60%),
+                linear-gradient(to right, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255, 255, 255, 0.025) 1px, transparent 1px)
+              `,
+              backgroundSize: "100% 100%, 32px 32px, 32px 32px",
             }}
           >
-            {/* Search Query Pill */}
-            <div className="absolute top-4 left-4 z-10 flex items-center gap-2 bg-[#F5F5F0] rounded-full px-3.5 py-1.5 shadow-md">
-              <Search className="w-3.5 h-3.5 text-black/70" strokeWidth={1.5} />
-              <span className="font-mono text-[11px] text-[#080808] whitespace-nowrap">
-                &ldquo;how to build RAG from DB?&rdquo;
-              </span>
-              <span className="relative flex h-1.5 w-1.5 ml-1">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#C8F432] opacity-60" />
-                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-[#C8F432]" />
-              </span>
-            </div>
-
-            {/* Vector Dots */}
-            {vectors.map((vec, i) => {
-              const isHovered = hoveredId === vec.id;
-              return (
-                <motion.div
-                  key={vec.id}
-                  className="absolute z-[5] cursor-pointer"
-                  style={{
-                    left: `${vec.x}%`,
-                    top: `${vec.y}%`,
-                    transform: "translate(-50%, -50%)",
-                  }}
-                  initial={{ opacity: 0, scale: 0 }}
-                  animate={
-                    isInView
-                      ? { opacity: 1, scale: 1 }
-                      : { opacity: 0, scale: 0 }
-                  }
-                  transition={{
-                    type: "spring",
-                    stiffness: 260,
-                    damping: 20,
-                    delay: entranceDelays[i],
-                  }}
-                  onMouseEnter={() => setHoveredId(vec.id)}
-                  onMouseLeave={() => setHoveredId(null)}
-                >
-                  {/* Hit area (larger than dot for easier hover) */}
-                  <div className="relative flex items-center justify-center w-8 h-8">
-                    <motion.div
-                      className="rounded-full"
-                      animate={{
-                        width: isHovered ? 14 : 12,
-                        height: isHovered ? 14 : 12,
-                        backgroundColor: isHovered ? "#C8F432" : ScoreToColor(vec.score),
-                        boxShadow: isHovered
-                          ? "0 0 20px #C8F432, 0 0 40px rgba(200,244,50,0.3)"
-                          : "0 0 0px transparent",
-                        scale: isHovered ? 1.8 : 1,
-                      }}
-                      transition={{ duration: 0.2, ease: "easeOut" }}
-                    />
-                  </div>
-
-                  {/* Connection line to query (faint) when hovered */}
-                  {isHovered && (
-                    <motion.div
-                      className="absolute top-1/2 left-1/2 pointer-events-none"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
+            {/* SVG Connecting lines — Principle 7: Moving in arcs */}
+            <svg className="absolute inset-0 w-full h-full pointer-events-none">
+              {hoveredVector &&
+                vectors
+                  .filter((v) => v.id !== hoveredVector.id)
+                  .map((other) => (
+                    <motion.line
+                      key={`line-${hoveredVector.id}-${other.id}`}
+                      initial={{ pathLength: 0, opacity: 0 }}
+                      animate={{ pathLength: 1, opacity: 0.35 }}
                       exit={{ opacity: 0 }}
-                    >
-                      <svg
-                        className="absolute"
-                        style={{
-                          width: 0,
-                          height: 0,
-                          overflow: "visible",
-                        }}
-                      >
-                        <line
-                          x1={0}
-                          y1={0}
-                          x2={`${-vec.x + 8}%`}
-                          y2={`${-vec.y + 6}%`}
-                          stroke="#C8F432"
-                          strokeOpacity={0.12}
-                          strokeWidth={1}
-                          strokeDasharray="4 4"
-                        />
-                      </svg>
-                    </motion.div>
-                  )}
-                </motion.div>
+                      transition={{ duration: 0.3, ease: "easeOut" }}
+                      x1={`${hoveredVector.x}%`}
+                      y1={`${hoveredVector.y}%`}
+                      x2={`${other.x}%`}
+                      y2={`${other.y}%`}
+                      stroke="#C8F432"
+                      strokeWidth="1"
+                      strokeDasharray="3 3"
+                    />
+                  ))}
+            </svg>
+
+            {/* Vector Points */}
+            {vectors.map((v, i) => {
+              const isHovered = hoveredId === v.id;
+              const hasHover = hoveredId !== null;
+              /* Principle 3: Staging the Focus — dim non-focused elements */
+              const isDimmed = hasHover && !isHovered;
+
+              return (
+                <div
+                  key={v.id}
+                  className="absolute -translate-x-1/2 -translate-y-1/2"
+                  style={{ left: `${v.x}%`, top: `${v.y}%` }}
+                >
+                  {/* Principle 14: Bigger Hit Area — 40x40px touch surface around the 12px dot */}
+                  <motion.div
+                    className="relative w-10 h-10 -m-3 flex items-center justify-center cursor-pointer group"
+                    onMouseEnter={() => setHoveredId(v.id)}
+                    onMouseLeave={() => setHoveredId(null)}
+                    /* Principle 1: Squash & stretch on tap */
+                    whileTap={{ scale: 0.85 }}
+                  >
+                    {/* Pulsing Sonar Ring when Hovered — Principle 10: Exaggerated Feedback */}
+                    {isHovered && (
+                      <motion.div
+                        className="absolute w-8 h-8 rounded-full border border-[#C8F432] pointer-events-none"
+                        initial={{ scale: 0.6, opacity: 1 }}
+                        animate={{ scale: 1.8, opacity: 0 }}
+                        transition={{ repeat: Infinity, duration: 1.2, ease: "easeOut" }}
+                      />
+                    )}
+
+                    {/* Dot graphic */}
+                    <motion.div
+                      className={`rounded-full transition-colors duration-200 ${
+                        isHovered
+                          ? "w-4 h-4 bg-[#C8F432] shadow-[0_0_18px_#C8F432]"
+                          : "w-2.5 h-2.5 bg-white/70 group-hover:bg-[#C8F432]"
+                      }`}
+                      animate={{
+                        opacity: isDimmed ? 0.2 : 1,
+                        scale: isHovered ? 1.3 : 1,
+                      }}
+                      transition={{ duration: 0.18, ease: "easeOut" }}
+                    />
+                  </motion.div>
+                </div>
               );
             })}
 
-            {/* Tooltip Panel — bottom overlay */}
-            <AnimatePresence mode="wait">
+            {/* Hover Floating Details Card */}
+            <AnimatePresence>
               {hoveredVector && (
                 <motion.div
-                  key={hoveredVector.id}
-                  className="absolute bottom-4 left-4 right-4 z-20"
-                  initial={{ opacity: 0, y: 16 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 10 }}
-                  transition={{ duration: 0.25, ease: "easeOut" }}
+                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 8, scale: 0.96 }}
+                  /* Principle 6: Slow in & slow out */
+                  transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+                  className="absolute bottom-4 left-4 right-4 md:left-auto md:right-4 md:w-80 bg-[#121214]/95 border border-white/15 rounded-xl p-4 backdrop-blur-xl shadow-2xl z-20 pointer-events-none"
                 >
-                  <div className="bg-[#F5F5F0] rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center gap-4 shadow-2xl border border-white/20">
-                    {/* Left info */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-2 flex-wrap">
-                        <span className="inline-flex items-center bg-[#080808] text-white font-mono text-[10px] px-2.5 py-0.5 rounded-full tracking-wide">
-                          {hoveredVector.id}
-                        </span>
-                        <span className="inline-flex items-center gap-1 font-mono text-xs font-semibold text-[#080808]">
-                          <Hash className="w-3 h-3 text-black/50" strokeWidth={1.5} />
-                          <span>score: {hoveredVector.score.toFixed(2)}</span>
-                        </span>
-                        <span className="inline-flex items-center gap-1 bg-[#080808]/[0.06] text-[#080808]/70 font-mono text-[10px] px-2.5 py-0.5 rounded-full">
-                          <FileStack className="w-3 h-3 text-black/50" strokeWidth={1.5} />
-                          <span>{hoveredVector.source}</span>
-                        </span>
-                      </div>
-                      <p className="font-body text-sm text-[#080808]/85 leading-relaxed truncate">
-                        &ldquo;{hoveredVector.text}&rdquo;
-                      </p>
-                    </div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-mono text-[11px] text-white/50">{hoveredVector.id}</span>
+                    <span className={`font-mono text-xs font-bold ${ScoreColor(hoveredVector.score)}`}>
+                      cosine {(hoveredVector.score * 100).toFixed(0)}%
+                    </span>
+                  </div>
 
-                    {/* Embedding preview bars */}
-                    <div className="flex items-center gap-2 shrink-0 bg-black/[0.04] px-3 py-2 rounded-xl">
-                      <Braces className="w-3.5 h-3.5 text-black/40" strokeWidth={1.5} />
-                      <div className="flex items-end gap-[2px] h-7">
-                        {embeddingBars[hoveredVector.id].map((h, i) => (
-                          <motion.div
-                            key={i}
-                            className="w-[2.5px] rounded-full bg-[#080808]/30"
-                            initial={{ height: 2 }}
-                            animate={{ height: `${h * 0.3}px` }}
-                            transition={{
-                              duration: 0.4,
-                              ease: "easeOut",
-                              delay: i * 0.02,
-                            }}
-                          />
-                        ))}
-                      </div>
-                    </div>
+                  <p className="text-xs text-white/90 font-medium font-body leading-snug mb-3">
+                    {hoveredVector.text}
+                  </p>
+
+                  <div className="text-[10px] font-mono text-white/50 border-t border-white/5 pt-2 flex items-center justify-between">
+                    <span>{hoveredVector.source}</span>
+                    <span className="text-[#C8F432]">verified chunk</span>
+                  </div>
+
+                  {/* Principle 8: Secondary action — Embedding spectrum animation */}
+                  <div className="mt-2.5 flex items-end gap-0.5 h-3">
+                    {embeddingBars[hoveredVector.id]?.slice(0, 16).map((h, idx) => (
+                      <div
+                        key={idx}
+                        className="flex-1 bg-[#C8F432]/40 rounded-full"
+                        style={{ height: `${h}%` }}
+                      />
+                    ))}
                   </div>
                 </motion.div>
               )}
             </AnimatePresence>
           </div>
-
-          {/* Footer Stats */}
-          <div className="grid grid-cols-3 border-t border-white/[0.06]">
-            {[
-              { label: "Total Chunks", value: "1,234" },
-              { label: "Avg Latency", value: "43ms" },
-              { label: "Model", value: "bge-small" },
-            ].map((stat, i) => (
-              <div
-                key={stat.label}
-                className={`px-4 md:px-6 py-3 ${
-                  i < 2 ? "border-r border-white/[0.06]" : ""
-                }`}
-              >
-                <span className="block font-mono text-[10px] uppercase tracking-wider text-white/30 mb-0.5">
-                  {stat.label}
-                </span>
-                <span className="block font-mono text-sm text-[#F5F5F0]">
-                  {stat.value}
-                </span>
-              </div>
-            ))}
-          </div>
         </motion.div>
       </div>
     </section>
   );
-}
-
-function ScoreToColor(score: number): string {
-  if (score >= 0.95) return "#C8F432";
-  if (score >= 0.92) return "rgba(200, 244, 50, 0.7)";
-  if (score >= 0.89) return "rgba(200, 244, 50, 0.45)";
-  return "rgba(200, 244, 50, 0.25)";
 }

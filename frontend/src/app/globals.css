@@ -26,9 +26,9 @@ body {
   min-height: 100vh;
 }
 
-/* Custom focus ring with Electric Blue */
+/* Custom focus ring with LOCUS Lime */
 *:focus-visible {
-  outline: 2px solid #3B82F6;
+  outline: 2px solid #C8F432;
   outline-offset: 2px;
 }
 
@@ -38,12 +38,12 @@ body {
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #09090B;
+  background: #080808;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2A2A2E;
+  background: #1E1E22;
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #3B82F6;
+  background: #C8F432;
 }

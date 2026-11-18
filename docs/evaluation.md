@@ -1,6 +1,6 @@
 # Quantitative Evaluation Suite & RAG Doctor v1
 
-Sift includes an internal quantitative evaluation harness and diagnostic engine designed for reproducible, offline verification of RAG retrieval quality, routing accuracy, and answer faithfulness without synthetic benchmarks or unverified claims.
+LOCUS includes an internal quantitative evaluation harness and diagnostic engine designed for reproducible, offline verification of RAG retrieval quality, routing accuracy, and answer faithfulness without synthetic benchmarks or unverified claims.
 
 ---
 
@@ -22,11 +22,11 @@ $$\text{precision\_ceiling@k} = \min\left(1.0, \frac{R}{k}\right)$$
 
 For instance, when an item specifies a single gold evidence span ($R=1$), at $k=5$ the maximum possible raw precision is $1/5 = 0.2000$. A raw precision of $0.2000$ in this context represents 100% relevant retrieval.
 
-To prevent misinterpreting raw precision, Sift reports the mathematical ceiling alongside raw precision and computes **normalized precision**:
+To prevent misinterpreting raw precision, LOCUS reports the mathematical ceiling alongside raw precision and computes **normalized precision**:
 $$\text{precision\_norm@k} = \frac{\text{relevant chunks in top-}k}{\min(k, R)}$$
 
 ### 2.2 Token-Level Context Precision (`context_precision_tokens@k`)
-Standard precision evaluates chunk counts regardless of chunk lengths. To detect context dilution caused by excessively large chunk windows, Sift measures token-level context precision:
+Standard precision evaluates chunk counts regardless of chunk lengths. To detect context dilution caused by excessively large chunk windows, LOCUS measures token-level context precision:
 $$\text{context\_precision\_tokens@k} = \frac{\sum_{c \in \text{relevant top-}k \text{ chunks}} \text{tokens}(c)}{\sum_{c \in \text{top-}k \text{ chunks}} \text{tokens}(c)}$$
 
 Diagnostic rule **D3 (Broad Chunks)** uses `context_precision_tokens@5`. It requires that `hit@5` is healthy ($\ge 0.50$) and enforces an **applicability gate**: D3 fires only if at least 50% of the relevant chunks/documents in the corpus are longer than the proposed chunk size (400 chars). If not, D3 does not fire and persists the reason `"chunk_size_change_cannot_affect"`.
@@ -87,7 +87,7 @@ The label lint engine verifies ground-truth benchmark labels against the active 
 When comparing two RAG configurations (e.g. Dense vs Hybrid), both configurations are evaluated on the exact same set of benchmark queries. Evaluating two runs as independent samples using two-sample t-tests or non-overlapping bootstrap resamples artificially inflates variance and destroys query-level covariance.
 
 ### Implementation
-1. For common item pairs $i = 1, \dots, N$, Sift draws $B = 2,000$ bootstrap resamples with replacement.
+1. For common item pairs $i = 1, \dots, N$, LOCUS draws $B = 2,000$ bootstrap resamples with replacement.
 2. For each resample $b$, it calculates the mean paired delta:
    $$\Delta^{(b)} = \frac{1}{N} \sum_{i=1}^N \left( \text{score}_{B, i}^{(b)} - \text{score}_{A, i}^{(b)} \right)$$
 3. The empirical 95% confidence interval is $[Q_{0.025}, Q_{0.975}]$.

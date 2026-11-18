@@ -2,274 +2,443 @@
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { GraduationCap, Microscope, Bot, CheckCircle2, ArrowRight } from "lucide-react";
 
 const tabs = [
   {
     id: "student",
     label: "Student",
-    title: "Study Smarter",
-    desc: "Upload your textbooks and notes. Ask questions, get cited answers from your own materials. Perfect for exam prep.",
-    features: ["PDF & DOCX support", "Citation tracking", "Fast retrieval"],
+    icon: GraduationCap,
+    title: "Study Smarter with Verifiable Notes",
+    desc: "Upload syllabi, lecture slides, and voluminous textbooks. Ask complex conceptual questions and receive exact page-level citations to prepare for examinations with confidence.",
+    features: [
+      "Sub-second PDF, CSV & DOCX ingestion",
+      "Instant page-level citations & highlight snippets",
+      "Interactive knowledge recall with pgvector search"
+    ],
     pattern: "student",
+    badge: "EXAM READY",
   },
   {
     id: "researcher",
     label: "Researcher",
-    title: "Literature Review",
-    desc: "Feed in papers, patents, datasets. Cross-reference findings across 100+ documents in seconds.",
-    features: ["Multi-document RAG", "Similarity search", "Export citations"],
+    icon: Microscope,
+    title: "Cross-Reference Literature at Scale",
+    desc: "Index hundreds of arXiv preprints, technical whitepapers, and scientific datasets. Uncover non-obvious correlations across papers with dense 384-dimensional semantic similarity.",
+    features: [
+      "Multi-document cosine cluster analysis",
+      "Verbatim mathematical & technical quote extraction",
+      "Seamless export of structured markdown citations"
+    ],
     pattern: "researcher",
+    badge: "MULTI-DOC RAG",
   },
   {
     id: "support",
-    label: "Support Bot",
-    title: "Instant Support",
-    desc: "Connect your docs and FAQ database. Deploy a chat widget that answers customer questions with sources.",
-    features: ["API & Widget", "Custom branding", "Analytics dashboard"],
+    label: "Engineer / Bot",
+    icon: Bot,
+    title: "Deploy Verified Production Bots",
+    desc: "Connect your API documentation, release notes, and troubleshooting runbooks. Embed a low-latency chat widget that answers customer inquiries without hallucinations.",
+    features: [
+      "FastAPI streaming SSE endpoints with API keys",
+      "Embeddable zero-config React component",
+      "Strict grounding in company knowledge base"
+    ],
     pattern: "support",
+    badge: "PRODUCTION API",
   },
 ] as const;
 
-function PatternVisual({ pattern }: { pattern: string }) {
+/* ────────────────────────────────────────────────────────────────── */
+/*  Principle 7: Moving in Arcs & Principle 8: Secondary Action       */
+/* ────────────────────────────────────────────────────────────────── */
+
+function DynamicPatternVisual({ pattern }: { pattern: string }) {
   if (pattern === "student") {
-    // Scattered dots in a grid-like study pattern
+    // Knowledge Matrix with curved arcs and pulsating nodes
     return (
-      <svg
-        viewBox="0 0 200 200"
-        className="w-full h-full"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-      >
-        {Array.from({ length: 6 }).map((_, row) =>
-          Array.from({ length: 6 }).map((_, col) => {
-            const x = 20 + col * 32;
-            const y = 20 + row * 32;
-            const opacity = ((row + col) % 3 === 0) ? 0.6 : 0.2;
-            const r = ((row * col) % 3 === 0) ? 4 : 2.5;
-            return (
+      <div className="relative w-full h-full flex items-center justify-center p-6">
+        <svg
+          viewBox="0 0 240 240"
+          className="w-full h-full"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          {/* Subtle background grid lines */}
+          {Array.from({ length: 5 }).map((_, i) => (
+            <line
+              key={`h-${i}`}
+              x1="30"
+              y1={40 + i * 40}
+              x2="210"
+              y2={40 + i * 40}
+              stroke="rgba(255,255,255,0.06)"
+              strokeDasharray="3 3"
+            />
+          ))}
+          {Array.from({ length: 5 }).map((_, i) => (
+            <line
+              key={`v-${i}`}
+              x1={40 + i * 40}
+              y1="30"
+              x2={40 + i * 40}
+              y2="210"
+              stroke="rgba(255,255,255,0.06)"
+              strokeDasharray="3 3"
+            />
+          ))}
+
+          {/* Curved Knowledge Arc (Principle 7) */}
+          <motion.path
+            d="M 40 160 Q 120 40 200 120"
+            stroke="#C8F432"
+            strokeWidth="2"
+            strokeOpacity="0.7"
+            fill="none"
+            initial={{ pathLength: 0 }}
+            animate={{ pathLength: 1 }}
+            transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
+          />
+
+          <motion.path
+            d="M 50 180 Q 100 210 180 170"
+            stroke="rgba(255,255,255,0.25)"
+            strokeWidth="1.5"
+            strokeDasharray="4 4"
+            fill="none"
+          />
+
+          {/* Knowledge Nodes */}
+          {[
+            { cx: 40, cy: 160, r: 6, pulse: true, label: "Textbook.pdf" },
+            { cx: 120, cy: 75, r: 8, pulse: true, label: "Lecture_04.docx" },
+            { cx: 200, cy: 120, r: 6, pulse: true, label: "Lab_Notes.csv" },
+            { cx: 80, cy: 120, r: 4, pulse: false },
+            { cx: 160, cy: 140, r: 4, pulse: false },
+          ].map((node, i) => (
+            <g key={i}>
+              {node.pulse && (
+                <motion.circle
+                  cx={node.cx}
+                  cy={node.cy}
+                  r={node.r * 2.2}
+                  fill="#C8F432"
+                  initial={{ opacity: 0.4, scale: 0.8 }}
+                  animate={{ opacity: [0.4, 0], scale: [0.8, 1.8] }}
+                  transition={{
+                    duration: 2,
+                    repeat: Infinity,
+                    delay: i * 0.4,
+                    ease: "easeOut",
+                  }}
+                />
+              )}
               <circle
-                key={`${row}-${col}`}
-                cx={x}
-                cy={y}
-                r={r}
-                fill="#C8F432"
-                opacity={opacity}
+                cx={node.cx}
+                cy={node.cy}
+                r={node.r}
+                fill={node.pulse ? "#C8F432" : "#FFFFFF"}
+                opacity={node.pulse ? 0.95 : 0.4}
               />
-            );
-          })
-        )}
-        {/* Connecting lines for some dots */}
-        <line x1="20" y1="20" x2="84" y2="20" stroke="#C8F432" strokeOpacity="0.15" strokeWidth="1" />
-        <line x1="20" y1="20" x2="20" y2="84" stroke="#C8F432" strokeOpacity="0.15" strokeWidth="1" />
-        <line x1="84" y1="84" x2="148" y2="84" stroke="#C8F432" strokeOpacity="0.15" strokeWidth="1" />
-        <line x1="84" y1="84" x2="84" y2="148" stroke="#C8F432" strokeOpacity="0.15" strokeWidth="1" />
-        <line x1="148" y1="148" x2="148" y2="180" stroke="#C8F432" strokeOpacity="0.15" strokeWidth="1" />
-      </svg>
+            </g>
+          ))}
+        </svg>
+
+        {/* Floating Citation Pill */}
+        <motion.div
+          initial={{ opacity: 0, y: 10, scale: 0.9 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ delay: 0.3, duration: 0.4 }}
+          className="absolute bottom-4 left-6 right-6 bg-[#0B0B0B]/90 backdrop-blur-md border border-[#C8F432]/30 px-3 py-2 rounded-xl flex items-center justify-between text-xs font-mono shadow-xl"
+        >
+          <span className="text-[#C8F432] flex items-center gap-1.5 font-semibold">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#C8F432] animate-pulse" />
+            Chapter 8 • Page 142
+          </span>
+          <span className="text-white/40">98.4% match</span>
+        </motion.div>
+      </div>
     );
   }
 
   if (pattern === "researcher") {
-    // Network/constellation pattern
+    // Dynamic Constellation Graph oscillating in arcs
     const nodes = [
-      { x: 100, y: 30 },
-      { x: 40, y: 70 },
-      { x: 160, y: 60 },
-      { x: 70, y: 130 },
-      { x: 140, y: 120 },
-      { x: 100, y: 170 },
-      { x: 30, y: 160 },
-      { x: 170, y: 160 },
+      { id: 0, x: 120, y: 40, r: 7, label: "arXiv:2401" },
+      { id: 1, x: 50, y: 90, r: 5, label: "BERT" },
+      { id: 2, x: 190, y: 80, r: 6, label: "Gemini" },
+      { id: 3, x: 80, y: 160, r: 7, label: "MiniLM" },
+      { id: 4, x: 160, y: 150, r: 8, label: "pgvector" },
+      { id: 5, x: 120, y: 200, r: 5, label: "Cosine" },
     ];
+
     const edges = [
-      [0, 1], [0, 2], [1, 3], [2, 4], [3, 5], [4, 5],
-      [3, 6], [4, 7], [1, 4], [0, 4],
+      [0, 1], [0, 2], [1, 3], [2, 4], [3, 4], [3, 5], [4, 5], [1, 4]
     ];
+
     return (
-      <svg
-        viewBox="0 0 200 200"
-        className="w-full h-full"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-      >
-        {edges.map(([a, b], i) => (
-          <line
-            key={`e-${i}`}
-            x1={nodes[a].x}
-            y1={nodes[a].y}
-            x2={nodes[b].x}
-            y2={nodes[b].y}
-            stroke="#C8F432"
-            strokeOpacity="0.2"
-            strokeWidth="1"
-          />
-        ))}
-        {nodes.map((n, i) => (
-          <circle
-            key={`n-${i}`}
-            cx={n.x}
-            cy={n.y}
-            r={i % 3 === 0 ? 5 : 3}
-            fill="#C8F432"
-            opacity={i % 2 === 0 ? 0.7 : 0.35}
-          />
-        ))}
-      </svg>
+      <div className="relative w-full h-full flex items-center justify-center p-6">
+        <svg
+          viewBox="0 0 240 240"
+          className="w-full h-full"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          {/* Laser connection arcs */}
+          {edges.map(([a, b], i) => (
+            <motion.line
+              key={`edge-${i}`}
+              x1={nodes[a].x}
+              y1={nodes[a].y}
+              x2={nodes[b].x}
+              y2={nodes[b].y}
+              stroke="rgba(200, 244, 50, 0.3)"
+              strokeWidth="1.2"
+              initial={{ pathLength: 0 }}
+              animate={{ pathLength: 1 }}
+              transition={{ duration: 0.6, delay: i * 0.05 }}
+            />
+          ))}
+
+          {/* Oscillating Constellation Nodes */}
+          {nodes.map((node, i) => (
+            <g key={node.id}>
+              <motion.circle
+                cx={node.x}
+                cy={node.y}
+                r={node.r}
+                fill="#C8F432"
+                animate={{
+                  y: [0, i % 2 === 0 ? -4 : 4, 0],
+                  x: [0, i % 3 === 0 ? 3 : -3, 0],
+                }}
+                transition={{
+                  duration: 3 + i * 0.5,
+                  repeat: Infinity,
+                  ease: "easeInOut",
+                }}
+                className="drop-shadow-[0_0_8px_rgba(200,244,50,0.6)]"
+              />
+              <text
+                x={node.x + 10}
+                y={node.y + 3}
+                fill="rgba(255,255,255,0.5)"
+                fontSize="8"
+                fontFamily="monospace"
+              >
+                {node.label}
+              </text>
+            </g>
+          ))}
+        </svg>
+
+        {/* Floating Metrics Pill */}
+        <motion.div
+          initial={{ opacity: 0, y: 10, scale: 0.9 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ delay: 0.3, duration: 0.4 }}
+          className="absolute bottom-4 left-6 right-6 bg-[#0B0B0B]/90 backdrop-blur-md border border-white/10 px-3 py-2 rounded-xl flex items-center justify-between text-xs font-mono shadow-xl"
+        >
+          <span className="text-white/80 font-mono">148 Papers Indexed</span>
+          <span className="text-[#C8F432]">d = 384</span>
+        </motion.div>
+      </div>
     );
   }
 
-  // Support bot — chat bubble / wave pattern
+  // Support bot — real-time floating chat wave & response bubble
   return (
-    <svg
-      viewBox="0 0 200 200"
-      className="w-full h-full"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      {/* Horizontal wave lines */}
-      {[50, 90, 130, 170].map((y, i) => (
-        <path
-          key={`w-${i}`}
-          d={`M 10 ${y} Q 55 ${y - 12 + i * 3} 100 ${y} T 190 ${y}`}
-          stroke="#C8F432"
-          strokeOpacity={0.12 + i * 0.06}
-          strokeWidth="1.5"
-          fill="none"
-        />
-      ))}
-      {/* Chat bubble shapes */}
-      <rect x="30" y="30" width="60" height="28" rx="8" fill="#C8F432" opacity="0.15" />
-      <rect x="110" y="70" width="70" height="28" rx="8" fill="#C8F432" opacity="0.1" />
-      <rect x="40" y="120" width="50" height="28" rx="8" fill="#C8F432" opacity="0.2" />
-      {/* Small dots inside bubbles */}
-      <circle cx="45" cy="44" r="2" fill="#C8F432" opacity="0.5" />
-      <circle cx="55" cy="44" r="2" fill="#C8F432" opacity="0.5" />
-      <circle cx="65" cy="44" r="2" fill="#C8F432" opacity="0.5" />
-    </svg>
+    <div className="relative w-full h-full flex flex-col justify-between p-6">
+      {/* Background audio/retrieval waveform */}
+      <svg
+        viewBox="0 0 240 100"
+        className="w-full h-24"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        {[20, 50, 80].map((y, i) => (
+          <motion.path
+            key={`wave-${i}`}
+            d={`M 10 ${y} Q 60 ${y - 14} 120 ${y} T 230 ${y}`}
+            stroke="#C8F432"
+            strokeOpacity={0.25 + i * 0.15}
+            strokeWidth="1.5"
+            fill="none"
+            animate={{
+              d: [
+                `M 10 ${y} Q 60 ${y - 14} 120 ${y} T 230 ${y}`,
+                `M 10 ${y} Q 60 ${y + 14} 120 ${y} T 230 ${y}`,
+                `M 10 ${y} Q 60 ${y - 14} 120 ${y} T 230 ${y}`,
+              ],
+            }}
+            transition={{
+              duration: 3 + i,
+              repeat: Infinity,
+              ease: "easeInOut",
+            }}
+          />
+        ))}
+      </svg>
+
+      {/* Realistic chat bubble stack */}
+      <div className="space-y-2.5 z-10">
+        <motion.div
+          initial={{ opacity: 0, x: -12 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.3 }}
+          className="bg-white/[0.08] border border-white/15 p-2.5 rounded-xl rounded-tl-sm text-xs font-mono text-white/90 max-w-[85%]"
+        >
+          <span className="text-[#C8F432]">User:</span> How do I authenticate?
+        </motion.div>
+
+        <motion.div
+          initial={{ opacity: 0, x: 12 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.3, delay: 0.15 }}
+          className="bg-[#C8F432]/10 border border-[#C8F432]/30 p-2.5 rounded-xl rounded-tr-sm text-xs font-mono text-white max-w-[90%] ml-auto"
+        >
+          <span className="text-[#C8F432] font-semibold">LOCUS:</span> Pass Bearer token via Authorization header.
+          <span className="block mt-1 text-[10px] text-[#C8F432]/70">Source: auth_v1.md #L42</span>
+        </motion.div>
+      </div>
+
+      {/* Latency badge */}
+      <div className="mt-3 bg-[#0B0B0B]/90 border border-white/10 px-3 py-1.5 rounded-lg flex items-center justify-between text-[11px] font-mono text-white/40">
+        <span className="flex items-center gap-1.5 text-white/70">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+          FastAPI SSE Streaming
+        </span>
+        <span className="text-[#C8F432]">32ms TTFT</span>
+      </div>
+    </div>
   );
 }
 
-const contentVariants = {
-  enter: { opacity: 0, y: 16 },
-  center: { opacity: 1, y: 0 },
-  exit: { opacity: 0, y: -12 },
-};
-
 export default function UseCases() {
   const [active, setActive] = useState(0);
-  const tab = tabs[active];
+  const currentTab = tabs[active];
 
   return (
-    <section id="use-cases" className="relative bg-[#080808] py-20 overflow-hidden">
-      {/* Noise grain overlay */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 z-0"
-        style={{
-          backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E")`,
-          backgroundRepeat: "repeat",
-          backgroundSize: "128px 128px",
-        }}
-      />
+    <section id="use-cases" className="relative bg-[#080808] py-24 overflow-hidden border-t border-white/5">
+      {/* Background radial gradient */}
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_60%_50%_at_50%_40%,rgba(200,244,50,0.03),transparent)]" />
 
-      <div className="relative z-10 mx-auto max-w-5xl px-6">
-        {/* Section header */}
+      <div className="relative z-10 mx-auto max-w-5xl px-4 sm:px-6">
+        {/* Section header (Principle 3: Staging the Focus) */}
         <motion.div
-          className="text-center mb-12"
+          className="text-center max-w-2xl mx-auto mb-14"
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
-          transition={{ duration: 0.5, ease: "easeOut" }}
+          transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
         >
-          <h2 className="font-heading text-3xl md:text-4xl font-semibold text-[#F5F5F0]">
-            One engine, many uses
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/[0.05] border border-white/10 text-white/70 text-xs font-mono mb-4">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#C8F432]" />
+            VERSATILE RETRIEVAL
+          </div>
+
+          <h2 className="font-heading text-3xl md:text-4xl font-bold text-white tracking-tight">
+            One retrieval engine. Endless applications.
           </h2>
-          <p className="mt-3 text-white/50 font-body max-w-lg mx-auto text-sm md:text-base">
-            LOCUS adapts to your workflow &mdash; whether you&apos;re studying, researching, or building products.
+          <p className="mt-3 text-white/50 font-body text-sm md:text-base leading-relaxed">
+            Whether accelerating technical research, passing university finals, or serving production customer queries.
           </p>
         </motion.div>
 
-        {/* Tab bar */}
-        <motion.div
-          className="flex justify-center mb-10"
-          initial={{ opacity: 0, y: 12 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          transition={{ duration: 0.4, ease: "easeOut", delay: 0.1 }}
-        >
-          <div className="inline-flex bg-white/[0.05] rounded-full p-1 gap-1">
-            {tabs.map((t, i) => (
-              <button
-                key={t.id}
-                onClick={() => setActive(i)}
-                className={`
-                  relative rounded-full px-5 py-2 text-sm font-body font-medium transition-colors duration-300
-                  ${active === i
-                    ? "bg-white text-black"
-                    : "text-white/60 hover:text-white/80"
-                  }
-                `}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-        </motion.div>
+        {/* Tab Bar (Principle 13: Fitts's Law + Principle 20: Frequency of Use) */}
+        <div className="flex justify-center mb-12">
+          <div className="inline-flex bg-white/[0.04] border border-white/10 rounded-full p-1.5 gap-1.5 shadow-[0_8px_30px_rgba(0,0,0,0.6)]">
+            {tabs.map((tab, i) => {
+              const Icon = tab.icon;
+              const isSelected = active === i;
 
-        {/* Tab content */}
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActive(i)}
+                  // Principle 14: Bigger Hit Area (before:absolute before:-inset-1.5)
+                  className="relative rounded-full px-5 sm:px-7 py-2.5 text-xs sm:text-sm font-medium transition-all duration-200 flex items-center gap-2 cursor-pointer before:absolute before:-inset-1 before:content-['']"
+                  style={{ WebkitTapHighlightColor: "transparent" }}
+                >
+                  {/* Active sliding pill background (Principle 4: Pose to pose / Frequency of use) */}
+                  {isSelected && (
+                    <motion.div
+                      layoutId="activeUseCasePill"
+                      className="absolute inset-0 rounded-full bg-white text-black shadow-lg"
+                      transition={{ type: "spring", stiffness: 450, damping: 32 }}
+                    />
+                  )}
+
+                  {/* Icon & Label */}
+                  <span
+                    className={`relative z-10 flex items-center gap-2 ${
+                      isSelected ? "text-black font-semibold" : "text-white/60 hover:text-white"
+                    }`}
+                  >
+                    <Icon className="w-4 h-4" strokeWidth={isSelected ? 2 : 1.5} />
+                    <span>{tab.label}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Tab Content Box (Principle 11: Solid Drawing & Principle 16: Miller's Law) */}
         <AnimatePresence mode="wait">
           <motion.div
-            key={tab.id}
-            variants={contentVariants}
-            initial="enter"
-            animate="center"
-            exit="exit"
-            transition={{ duration: 0.35, ease: "easeOut" }}
-            className="grid md:grid-cols-2 gap-8 items-center"
+            key={currentTab.id}
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+            className="grid grid-cols-1 md:grid-cols-12 gap-6 items-stretch"
           >
-            {/* Text side */}
-            <div className="order-2 md:order-1">
-              <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-8">
-                <h3 className="font-heading text-2xl font-semibold text-[#F5F5F0] mb-3">
-                  {tab.title}
+            {/* Left text column (7 cols) */}
+            <div className="md:col-span-7 bg-[#0E0E0E]/90 border border-white/10 rounded-2xl p-7 md:p-8 flex flex-col justify-between shadow-[0_12px_40px_rgba(0,0,0,0.7)] relative overflow-hidden before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-white/20 before:to-transparent">
+              <div>
+                <div className="inline-block px-2.5 py-0.5 rounded-full bg-[#C8F432]/10 border border-[#C8F432]/30 text-[#C8F432] text-[11px] font-mono font-semibold mb-4">
+                  {currentTab.badge}
+                </div>
+
+                <h3 className="font-heading text-2xl md:text-3xl font-bold text-white mb-3 tracking-tight">
+                  {currentTab.title}
                 </h3>
-                <p className="font-body text-white/50 text-sm leading-relaxed mb-6">
-                  {tab.desc}
+
+                <p className="font-body text-white/55 text-sm md:text-base leading-relaxed mb-6">
+                  {currentTab.desc}
                 </p>
-                <ul className="space-y-3">
-                  {tab.features.map((f) => (
-                    <li
-                      key={f}
-                      className="flex items-center gap-3 text-sm font-body text-white/70"
+
+                {/* Miller's Law: 3 concise bullet points */}
+                <div className="space-y-3.5">
+                  {currentTab.features.map((feat) => (
+                    <div
+                      key={feat}
+                      className="flex items-start gap-3 text-sm font-body text-white/80"
                     >
-                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#C8F432]/10">
-                        <svg
-                          width="10"
-                          height="10"
-                          viewBox="0 0 10 10"
-                          fill="none"
-                          className="text-[#C8F432]"
-                        >
-                          <path
-                            d="M2 5.5L4 7.5L8 3"
-                            stroke="currentColor"
-                            strokeWidth="1.5"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                      </span>
-                      {f}
-                    </li>
+                      <CheckCircle2 className="w-4 h-4 text-[#C8F432] shrink-0 mt-0.5" />
+                      <span>{feat}</span>
+                    </div>
                   ))}
-                </ul>
+                </div>
+              </div>
+
+              {/* Bottom CTA link */}
+              <div className="mt-8 pt-5 border-t border-white/5 flex items-center justify-between">
+                <a
+                  href="/playground"
+                  className="inline-flex items-center gap-2 text-xs font-mono text-[#C8F432] hover:underline"
+                >
+                  <span>Experience interactive mode</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </a>
+                <span className="text-white/30 text-xs font-mono">PostgreSQL pgvector</span>
               </div>
             </div>
 
-            {/* Visual side */}
-            <div className="order-1 md:order-2 flex items-center justify-center">
-              <div className="w-full max-w-[280px] aspect-square rounded-2xl border border-white/[0.06] bg-white/[0.02] p-6 flex items-center justify-center">
-                <PatternVisual pattern={tab.pattern} />
-              </div>
+            {/* Right interactive visual column (5 cols) */}
+            <div className="md:col-span-5 bg-[#0A0A0A] border border-white/10 rounded-2xl flex items-center justify-center min-h-[300px] shadow-[0_12px_40px_rgba(0,0,0,0.7)] overflow-hidden relative">
+              <DynamicPatternVisual pattern={currentTab.pattern} />
             </div>
           </motion.div>
         </AnimatePresence>

@@ -260,7 +260,7 @@ export default function SourcesPage() {
                 <button
                   type="submit"
                   disabled={ingesting || !urlInput.trim()}
-                  className="px-5 py-2 rounded-lg bg-electric hover:bg-electric/90 text-white font-medium text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  className="px-5 py-2 rounded-lg bg-electric hover:brightness-110 active:brightness-95 text-black font-semibold text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 cursor-pointer shadow-[0_0_12px_rgba(200,244,50,0.15)]"
                 >
                   {ingesting ? "Crawling..." : "Start Ingest"}
                 </button>

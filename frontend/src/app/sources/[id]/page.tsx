@@ -438,8 +438,8 @@ export default function SourceDetailPage({ params }: { params?: { id: string } }
         </div>
       </div>
 
-      {/* Tabs Navigation */}
-      <div className="border-b border-graphite flex gap-6 text-sm font-medium">
+      {/* Tabs Navigation (Horizontally scrollable on mobile) */}
+      <div className="border-b border-graphite flex gap-4 sm:gap-6 text-xs sm:text-sm font-medium overflow-x-auto whitespace-nowrap pb-0.5">
         {[
           { id: "health", label: "Health", icon: Activity },
           { id: "cleaning", label: "Cleaning", icon: Sparkles },
@@ -602,7 +602,7 @@ export default function SourceDetailPage({ params }: { params?: { id: string } }
               <button
                 onClick={() => setShowApplyModal(true)}
                 disabled={approvedCount === 0 || cleaningLoading}
-                className="px-4 py-1.5 rounded-lg bg-electric hover:bg-electric/90 text-white text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-subtle"
+                className="px-4 py-1.5 rounded-lg bg-electric hover:brightness-110 active:brightness-95 text-black text-xs font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_0_12px_rgba(200,244,50,0.15)] cursor-pointer"
               >
                 Apply Approved ({approvedCount})
               </button>
@@ -734,7 +734,7 @@ export default function SourceDetailPage({ params }: { params?: { id: string } }
                   </button>
                   <button
                     onClick={handleApplyCleaning}
-                    className="px-5 py-2 rounded-lg bg-electric hover:bg-electric/90 text-white text-sm font-semibold"
+                    className="px-5 py-2 rounded-lg bg-electric hover:brightness-110 active:brightness-95 text-black text-sm font-bold cursor-pointer shadow-[0_0_12px_rgba(200,244,50,0.15)]"
                   >
                     Confirm &amp; Apply
                   </button>
@@ -915,7 +915,7 @@ export default function SourceDetailPage({ params }: { params?: { id: string } }
                   </button>
                   <button
                     type="submit"
-                    className="px-4 py-1.5 rounded bg-electric text-white text-xs font-semibold"
+                    className="px-4 py-1.5 rounded bg-electric hover:brightness-110 active:brightness-95 text-black text-xs font-bold cursor-pointer"
                   >
                     Save Override
                   </button>
@@ -961,7 +961,7 @@ export default function SourceDetailPage({ params }: { params?: { id: string } }
               <div className="pt-5">
                 <button
                   onClick={handleStartIndex}
-                  className="px-4 py-2 rounded-lg bg-electric hover:bg-electric/90 text-white text-xs font-semibold"
+                  className="px-4 py-2 rounded-lg bg-electric hover:brightness-110 active:brightness-95 text-black text-xs font-bold cursor-pointer shadow-[0_0_12px_rgba(200,244,50,0.15)]"
                 >
                   Start Index Run
                 </button>

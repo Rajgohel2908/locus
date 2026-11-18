@@ -96,7 +96,7 @@ class TestRobotsCache:
         return client
 
     def test_disallowed_path_blocked(self):
-        robots_body = "User-agent: SiftBot\nDisallow: /private/\n"
+        robots_body = "User-agent: LocusBot\nDisallow: /private/\n"
         client = self._make_mock_client(robots_body)
 
         cache = RobotsCache()
@@ -105,7 +105,7 @@ class TestRobotsCache:
         assert cache.is_allowed("http://example.com/private/data") is False
 
     def test_allowed_path_passes(self):
-        robots_body = "User-agent: SiftBot\nDisallow: /private/\n"
+        robots_body = "User-agent: LocusBot\nDisallow: /private/\n"
         client = self._make_mock_client(robots_body)
 
         cache = RobotsCache()
@@ -157,11 +157,11 @@ class TestRobotsCache:
         assert "http://example.com/sitemap.xml" in sitemaps
 
     def test_specific_user_agent_takes_precedence(self):
-        """SiftBot-specific rules take precedence over wildcard."""
+        """LocusBot-specific rules take precedence over wildcard."""
         robots_body = (
             "User-agent: *\n"
             "Disallow:\n\n"            # allow all for everyone
-            "User-agent: SiftBot\n"
+            "User-agent: LocusBot\n"
             "Disallow: /no-bots/\n"    # but block bots from /no-bots/
         )
         client = self._make_mock_client(robots_body)

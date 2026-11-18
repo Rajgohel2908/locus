@@ -1,5 +1,5 @@
 """
-backend/evaluation/metrics.py — Deterministic metric computations for Sift evaluation runs.
+backend/evaluation/metrics.py — Deterministic metric computations for LOCUS evaluation runs.
 
 Rules:
 - Pure deterministic metrics; zero LLM calls.

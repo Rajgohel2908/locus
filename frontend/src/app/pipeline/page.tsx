@@ -235,7 +235,7 @@ export default function PipelinePage() {
             <button
               type="submit"
               disabled={analyzing || selectedSourceIds.length === 0}
-              className="px-6 py-2.5 rounded-lg bg-electric hover:bg-electric/90 text-white font-semibold text-xs transition-colors disabled:opacity-50 flex items-center gap-2 shadow-subtle"
+              className="px-6 py-2.5 rounded-lg bg-electric hover:brightness-110 active:brightness-95 text-black font-bold text-xs transition-all disabled:opacity-50 flex items-center gap-2 shadow-[0_0_12px_rgba(200,244,50,0.15)] cursor-pointer"
             >
               <Sparkles className="w-4 h-4" />
               <span>{analyzing ? "Evaluating Priors..." : "Analyze & Recommend"}</span>
@@ -293,7 +293,7 @@ export default function PipelinePage() {
                   <button
                     onClick={handleApply}
                     disabled={actionLoading}
-                    className="px-5 py-2 rounded-lg bg-electric hover:bg-electric/90 text-white text-xs font-semibold shadow-subtle"
+                    className="px-5 py-2 rounded-lg bg-electric hover:brightness-110 active:brightness-95 text-black font-semibold text-xs shadow-subtle cursor-pointer"
                   >
                     Apply Recommendation
                   </button>
@@ -483,7 +483,7 @@ export default function PipelinePage() {
                     onClick={() => loadGraph(c.id)}
                     className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
                       selectedConfigForGraph === c.id
-                        ? "bg-electric text-white"
+                        ? "bg-electric text-black font-semibold"
                         : "bg-slate text-muted hover:text-fg"
                     }`}
                   >

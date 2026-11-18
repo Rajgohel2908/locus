@@ -50,13 +50,13 @@ LOCUS is a production-grade, verifiable RAG and data quality system featuring de
 
 ## 2. Evaluation Suite & RAG Doctor v1 (Phase 7 & 8)
 
-Sift provides an internal, reproducible evaluation suite designed for quantitative benchmarking without unverified claims:
+LOCUS provides an internal, reproducible evaluation suite designed for quantitative benchmarking without unverified claims:
 
 ### 2.1 Mathematical Precision Ceiling & Normalized Metrics
 When an item has $R$ gold expected evidence spans, standard precision at depth $k$ is bounded by:
 $$\text{precision\_ceiling@k} = \min\left(1.0, \frac{R}{k}\right)$$
 
-For $R=1$ at $k=5$, raw precision cannot exceed $0.2000$. Sift reports this ceiling alongside raw precision and calculates normalized precision:
+For $R=1$ at $k=5$, raw precision cannot exceed $0.2000$. LOCUS reports this ceiling alongside raw precision and calculates normalized precision:
 $$\text{precision\_norm@k} = \frac{\text{relevant chunks in top-}k}{\min(k, R)}$$
 
 ### 2.2 Token-Level Context Precision
@@ -87,7 +87,7 @@ Estimates are reported both **in-sample** and using **Leave-One-Out (jackknife)*
 - Detects duplicate questions across the benchmark suite.
 
 ### 2.6 Non-Parametric Paired Bootstrap
-Comparing two retrieval strategies on the same benchmark queries introduces correlation across runs. Sift uses paired bootstrap resampling ($B=2,000$ resamples) to compute paired delta distributions $\Delta = \text{score}_B - \text{score}_A$ and 95% confidence intervals $[Q_{0.025}, Q_{0.975}]$. When the interval crosses zero, the result is reported strictly as `"No distinguishable difference"`.
+Comparing two retrieval strategies on the same benchmark queries introduces correlation across runs. LOCUS uses paired bootstrap resampling ($B=2,000$ resamples) to compute paired delta distributions $\Delta = \text{score}_B - \text{score}_A$ and 95% confidence intervals $[Q_{0.025}, Q_{0.975}]$. When the interval crosses zero, the result is reported strictly as `"No distinguishable difference"`.
 
 ---
 

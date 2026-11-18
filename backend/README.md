@@ -1,4 +1,4 @@
-# Sift — Phase 1 to Phase 7: Quantitative Evaluation Suite & RAG Doctor v1
+# LOCUS — Phase 1 to Phase 7: Quantitative Evaluation Suite & RAG Doctor v1
 
 A FastAPI + PostgreSQL (pgvector) backend that ingests files and websites, runs data-quality profiling, persists content to canonical stores, manages cleaning workflows with versioning and quarantine, provides a multi-strategy RAG system (dense, lexical, hybrid, hybrid_rerank), features a deterministic rule-based query router with a no-RAG structured path for tabular records, and includes a full quantitative evaluation suite with RAG Doctor v1 for automated, reproducible diagnosis and patching.
 
@@ -102,7 +102,7 @@ The demo server runs on **http://localhost:8765** and serves:
 | `page5.html` | Contains a **prompt-injection** sentence |
 | `page6.html` | **Stale** content (Last-Modified: 2020-01-01) |
 | `sitemap.xml` | Lists all pages |
-| `robots.txt` | Disallows `/page4.html` for SiftBot |
+| `robots.txt` | Disallows `/page4.html` for LocusBot |
 
 ---
 
@@ -282,7 +282,7 @@ Copy `.env.example` to `.env` or set environment variables:
 
 ```ini
 # Database connection
-DATABASE_URL=postgresql+psycopg2://<user>:<password>@localhost:5432/sift
+DATABASE_URL=postgresql+psycopg2://<user>:<password>@localhost:5432/locus
 
 # Embedding Configuration
 EMBED_MODEL=sentence-transformers/all-MiniLM-L6-v2
@@ -492,7 +492,7 @@ Response:
 
 ### 1. Retrieval Strategies
 
-Sift Phase 5 provides 4 explicit, selectable retrieval strategies via `/query` and `/retrieve/compare`:
+LOCUS Phase 5 provides 4 explicit, selectable retrieval strategies via `/query` and `/retrieve/compare`:
 
 1. **`dense` (Baseline, Default)**:
    - Preserves exact Phase 4 behavior.

@@ -2,7 +2,7 @@
 crawler/robots_cache.py — Robots.txt fetching and per-origin caching.
 
 Uses urllib.robotparser from the standard library.
-User-agent: SiftBot
+User-agent: LocusBot
 
 Usage:
     cache = RobotsCache()
@@ -15,7 +15,7 @@ import re
 from urllib.parse import urlparse
 from urllib.robotparser import RobotFileParser
 
-USER_AGENT = "SiftBot"
+USER_AGENT = "LocusBot"
 
 
 class RobotsCache:
@@ -66,7 +66,7 @@ class RobotsCache:
 
     def is_allowed(self, url: str) -> bool:
         """
-        Check whether SiftBot is allowed to fetch `url`.
+        Check whether LocusBot is allowed to fetch `url`.
         Returns True if robots.txt hasn't been fetched for this origin yet
         (caller should call fetch() first).
         """

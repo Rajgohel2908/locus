@@ -30,7 +30,7 @@ MAX_RESPONSE_BYTES  = 5 * 1024 * 1024   # 5 MB
 MIN_DELAY_S         = 1.5           # seconds between requests to same host
 MAX_REDIRECTS       = 3
 
-CRAWLER_USER_AGENT  = "SiftBot/1.0 (+https://github.com/sift)"
+CRAWLER_USER_AGENT  = "LocusBot/1.0 (+https://github.com/Rajgohel2908/locus)"
 
 
 class DelayTracker:

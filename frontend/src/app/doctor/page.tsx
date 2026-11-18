@@ -185,9 +185,9 @@ export default function DoctorPage() {
   return (
     <div className="flex-1 bg-obsidian text-fg min-h-screen flex flex-col font-mono text-xs">
       {/* Top Bar */}
-      <div className="h-16 px-6 border-b border-graphite bg-carbon flex items-center justify-between">
+      <div className="min-h-16 py-3 px-4 sm:px-6 border-b border-graphite bg-carbon flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded bg-electric/10 border border-electric/30 flex items-center justify-center text-electric">
+          <div className="w-8 h-8 rounded bg-electric/10 border border-electric/30 flex items-center justify-center text-electric shrink-0">
             <Activity className="w-4 h-4" />
           </div>
           <div>
@@ -198,12 +198,12 @@ export default function DoctorPage() {
 
         {/* Existing Reports Dropdown */}
         {reports.length > 0 && (
-          <div className="flex items-center gap-2">
-            <span className="text-muted text-[11px]">Report:</span>
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <span className="text-muted text-[11px] shrink-0">Report:</span>
             <select
               value={activeReport?.id || ""}
               onChange={(e) => handleSelectReport(Number(e.target.value))}
-              className="bg-slate border border-graphite rounded px-3 py-1.5 text-fg text-xs focus:outline-none focus:border-electric"
+              className="bg-slate border border-graphite rounded px-3 py-1.5 text-fg text-xs focus:outline-none focus:border-electric w-full sm:w-auto"
             >
               {reports.map((rep) => (
                 <option key={rep.id} value={rep.id}>
@@ -218,7 +218,7 @@ export default function DoctorPage() {
       {/* Notification Banner */}
       {notification && (
         <div
-          className={`px-6 py-2 border-b flex items-center justify-between text-xs ${
+          className={`px-4 sm:px-6 py-2 border-b flex items-center justify-between text-xs ${
             notification.type === "error"
               ? "bg-crimson/10 border-crimson/30 text-crimson"
               : notification.type === "success"
@@ -234,7 +234,7 @@ export default function DoctorPage() {
       )}
 
       {/* Workspace Body */}
-      <div className="flex-1 p-6 space-y-6 overflow-y-auto">
+      <div className="flex-1 p-4 sm:p-6 space-y-6 overflow-y-auto">
         {/* Run Selector & Trigger Panel */}
         <div className="bg-carbon rounded-lg border border-graphite p-4 space-y-3">
           <div className="text-[11px] font-bold text-fg uppercase tracking-wider text-muted/70">

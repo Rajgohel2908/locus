@@ -10,16 +10,16 @@ interface TechItem {
 }
 
 const innerOrbit: TechItem[] = [
-  { name: "Python", role: "Runtime", angle: 0 },
-  { name: "FastAPI", role: "API Layer", angle: 120 },
-  { name: "PostgreSQL", role: "Database", angle: 240 },
+  { name: "Python", role: "Computing Runtime", angle: 0 },
+  { name: "FastAPI", role: "Async API Layer", angle: 120 },
+  { name: "PostgreSQL", role: "pgvector Vector DB", angle: 240 },
 ];
 
 const outerOrbit: TechItem[] = [
-  { name: "Qdrant", role: "Vector DB", angle: 0 },
-  { name: "OpenAI", role: "LLM Provider", angle: 90 },
-  { name: "Next.js", role: "Frontend", angle: 180 },
-  { name: "LangChain", role: "Orchestration", angle: 270 },
+  { name: "Google Gemini", role: "Primary Answering LLM", angle: 0 },
+  { name: "Hugging Face", role: "Neural Embeddings", angle: 90 },
+  { name: "Next.js", role: "React Application Shell", angle: 180 },
+  { name: "LangChain", role: "AST Document Chunking", angle: 270 },
 ];
 
 const INNER_RADIUS = 120;
@@ -120,23 +120,25 @@ function OrbitRing({
               >
                 <div
                   className={`
-                    whitespace-nowrap select-none cursor-default
-                    rounded-full border font-mono text-xs px-3 py-1.5
-                    transition-all duration-300
+                    relative whitespace-nowrap select-none cursor-pointer
+                    rounded-full border font-mono text-xs px-4 py-2
+                    transition-all duration-200
+                    before:absolute before:-inset-2 before:content-['']
                     ${hoveredIdx === i
-                      ? "bg-[#C8F432]/15 border-[#C8F432]/40 text-[#C8F432] scale-110"
-                      : "bg-white/[0.04] border-white/[0.08] text-white/60"
+                      ? "bg-[#C8F432]/20 border-[#C8F432]/60 text-[#C8F432] scale-110 shadow-[0_0_20px_rgba(200,244,50,0.3)]"
+                      : "bg-white/[0.04] border-white/[0.08] text-white/70 hover:border-white/20"
                     }
                   `}
                 >
                   {item.name}
                 </div>
 
-                {/* Tooltip */}
+                {/* Tooltip — Principle 6: Slow in & slow out + Principle 9: Snappy Timing */}
                 {hoveredIdx === i && (
-                  <div className="absolute left-1/2 -translate-x-1/2 -top-9 whitespace-nowrap rounded-md bg-[#1a1a1a] border border-white/10 px-2.5 py-1 text-[11px] font-body text-white/70 shadow-lg pointer-events-none">
+                  <div className="absolute left-1/2 -translate-x-1/2 -top-10 whitespace-nowrap rounded-lg bg-[#141416] border border-white/15 px-3 py-1.5 text-[11px] font-body text-white shadow-2xl pointer-events-none animate-in fade-in zoom-in-95 duration-150 z-30">
+                    <span className="text-[#C8F432] font-mono mr-1.5">●</span>
                     {item.role}
-                    <div className="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-[#1a1a1a]" />
+                    <div className="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-[#141416]" />
                   </div>
                 )}
               </div>

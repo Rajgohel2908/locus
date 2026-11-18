@@ -1,4 +1,4 @@
-# conftest.py - project-wide pytest configuration for Sift backend.
+# conftest.py - project-wide pytest configuration for LOCUS backend.
 # Ensures the project root is on sys.path for all tests.
 # Enforces database isolation: all pytest runs must use TEST_DATABASE_URL (ending with _test).
 # Redirects UPLOAD_DIR to a tmp_path so tests never write into the repo.

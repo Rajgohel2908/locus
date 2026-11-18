@@ -1,8 +1,8 @@
 # backend/migrations/README.md
 
-## How Migrations Work in Sift
+## How Migrations Work in LOCUS
 
-Sift uses a **hybrid migration strategy**: SQLAlchemy ORM `create_all` for Phase 1 tables, then ordered SQL files for subsequent phases.
+LOCUS uses a **hybrid migration strategy**: SQLAlchemy ORM `create_all` for Phase 1 tables, then ordered SQL files for subsequent phases.
 
 ---
 
@@ -62,10 +62,10 @@ All SQL statements use `IF NOT EXISTS` / `ON CONFLICT DO NOTHING` so they are **
 ### Resetting the Database (Development Only)
 
 ```bash
-# Drop and recreate the sift database
-psql -U postgres -c "DROP DATABASE IF EXISTS sift;"
-psql -U postgres -c "CREATE DATABASE sift;"
-psql -U postgres -d sift -c "CREATE EXTENSION IF NOT EXISTS vector;"
+# Drop and recreate the locus database
+psql -U postgres -c "DROP DATABASE IF EXISTS locus;"
+psql -U postgres -c "CREATE DATABASE locus;"
+psql -U postgres -d locus -c "CREATE EXTENSION IF NOT EXISTS vector;"
 
 # Restart the app — init_db() will re-apply all migrations
 uvicorn main:app --reload

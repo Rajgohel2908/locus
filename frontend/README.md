@@ -60,7 +60,7 @@ cp .env.local.example .env.local
 
 ## 3. Design System & Tokens
 
-Adheres strictly to the Trustify/Sift Dark Theme design system (`docs/design.md`):
+Adheres strictly to the LOCUS Dark Theme design system (`docs/design.md`):
 
 | Token | Hex | Role |
 | :--- | :--- | :--- |

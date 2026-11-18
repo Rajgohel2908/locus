@@ -1,4 +1,4 @@
-﻿"""
+"""
 build_report.py â€” Generates the complete, audit-grade SECURITY_TEST_REPORT.md.
 """
 
@@ -65,19 +65,19 @@ def generate_report():
     med = sum(1 for t in all_tests if t["status"] == "FAIL" and t["severity"] == "Medium")
     low = sum(1 for t in all_tests if t["status"] == "FAIL" and t["severity"] == "Low")
 
-    content = f"""# SIFT PHASES 1â€“4 APPLICATION SECURITY & QA AUDIT REPORT
+    content = f"""# LOCUS PHASES 1–4 APPLICATION SECURITY & QA AUDIT REPORT
 
 **Date:** 2026-10-15  
-**Target:** Sift RAG Backend (FastAPI + PostgreSQL 16 pgvector)  
+**Target:** LOCUS RAG Backend (FastAPI + PostgreSQL 16 pgvector)  
 **Assessor:** Senior Application Security Engineer & QA Lead  
-**Scope:** Phases 1â€“4 (File Ingestion & Profiling, Canonical Store & Web Ingestion, Cleaning & Versioning, Baseline Dense RAG)  
+**Scope:** Phases 1–4 (File Ingestion & Profiling, Canonical Store & Web Ingestion, Cleaning & Versioning, Baseline Dense RAG)  
 **Environment:** Isolated test instance on port 8001 against test database `ragstudio_test`.
 
 ---
 
 ## 1. Executive Summary
 
-A comprehensive, adversarial Application Security and QA evaluation was conducted across all four development phases of the Sift backend. Testing covered dynamic penetration tests, input fuzzing, SSRF edge cases, transactional data immutability verification, adversarial prompt injection defense, vector index integrity, and static analysis (Bandit, pip-audit, Git secrets scanning).
+A comprehensive, adversarial Application Security and QA evaluation was conducted across all four development phases of the LOCUS backend. Testing covered dynamic penetration tests, input fuzzing, SSRF edge cases, transactional data immutability verification, adversarial prompt injection defense, vector index integrity, and static analysis (Bandit, pip-audit, Git secrets scanning).
 
 | Total Tests | PASS | FAIL (Vulnerabilities / Bugs) | BLOCKED | PASS Rate |
 | :---: | :---: | :---: | :---: | :---: |

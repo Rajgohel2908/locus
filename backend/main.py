@@ -1,5 +1,5 @@
 """
-main.py — FastAPI entry point for Sift (Phase 1 + Phase 2 + Phase 3).
+main.py — FastAPI entry point for LOCUS (Phase 1 + Phase 2 + Phase 3).
 
 Phase 1 endpoints (unchanged):
   POST /upload              — Upload a file, profile it, save to DB
@@ -230,7 +230,7 @@ def startup():
         logger.info(msg_rerank)
         print(msg_rerank)
 
-    print("[OK] Sift ready. DB tables ready. Uploads dir ready.")
+    print("[OK] LOCUS ready. DB tables ready. Uploads dir ready.")
 
 
 def _backfill_source_versions():

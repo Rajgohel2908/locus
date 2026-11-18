@@ -448,7 +448,7 @@ export default function EvaluationPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `sift_eval_scorecard_run_${runId}.md`;
+      a.download = `locus_eval_scorecard_run_${runId}.md`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (err: any) {
@@ -470,8 +470,8 @@ export default function EvaluationPage() {
           </div>
         </div>
 
-        {/* View Switcher */}
-        <div className="flex items-center gap-1 bg-graphite/40 p-1 rounded-lg border border-graphite">
+        {/* View Switcher (Horizontally scrollable on mobile) */}
+        <div className="flex items-center gap-1 bg-graphite/40 p-1 rounded-lg border border-graphite overflow-x-auto whitespace-nowrap max-w-full">
           <button
             onClick={() => setActiveTab("suites")}
             className={`px-3 py-1.5 rounded text-xs transition-colors ${

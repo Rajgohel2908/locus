@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Sift \u2014 Phase 1-4 Baseline RAG",
+    "title": "LOCUS \u2014 Phase 1-4 Baseline RAG",
     "description": "Data ingestion + quality profiling + content store + web crawler + cleaning workflow + baseline RAG",
     "version": "4.0.0"
   },
@@ -9,7 +9,7 @@
     "/ingest/url": {
       "post": {
         "summary": "Ingest a website via sitemap or single URL",
-        "description": "Crawl a website and store extracted text as documents.\n\n- Validates URL and performs SSRF protection.\n- Respects robots.txt (user-agent: SiftBot).\n- Discovers pages via sitemap.xml (with one level of sitemap index support).\n- Applies 1.5s inter-host delay, 10s timeout, 5MB response limit, max 3 redirects.\n- Extracts main content using trafilatura (no JavaScript execution).\n- Runs heuristic text quality checks on each document.\n- Returns a summary of stored and skipped pages.",
+        "description": "Crawl a website and store extracted text as documents.\n\n- Validates URL and performs SSRF protection.\n- Respects robots.txt (user-agent: LocusBot).\n- Discovers pages via sitemap.xml (with one level of sitemap index support).\n- Applies 1.5s inter-host delay, 10s timeout, 5MB response limit, max 3 redirects.\n- Extracts main content using trafilatura (no JavaScript execution).\n- Runs heuristic text quality checks on each document.\n- Returns a summary of stored and skipped pages.",
         "operationId": "ingest_url_ingest_url_post",
         "requestBody": {
           "content": {

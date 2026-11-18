@@ -1,5 +1,5 @@
 """
-routers/eval.py — REST API router for Sift Phase 7 Quantitative Evaluation Suite.
+routers/eval.py — REST API router for LOCUS Phase 7 Quantitative Evaluation Suite.
 
 Endpoints:
 - POST /eval/suites

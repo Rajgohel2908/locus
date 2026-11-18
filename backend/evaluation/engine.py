@@ -1529,7 +1529,7 @@ def generate_markdown_scorecard(db: Session, run_ids: List[int], split: str = "a
         return "# Evaluation Report\n\nNo valid runs specified."
 
     md = []
-    md.append("# Sift Reproducible Evaluation Scorecard\n")
+    md.append("# LOCUS Reproducible Evaluation Scorecard\n")
 
     # Banners
     any_mock = any(rep.get("is_mock") for rep in reports)

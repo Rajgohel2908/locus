@@ -144,7 +144,7 @@ export default function AskPage() {
       <div className="p-6 rounded-card border border-graphite bg-carbon space-y-5">
         <form onSubmit={handleQuerySubmit} className="space-y-5">
           {/* Main Question Input */}
-          <div className="flex gap-3">
+          <div className="flex flex-col sm:flex-row gap-3">
             <input
               type="text"
               value={question}
@@ -156,7 +156,7 @@ export default function AskPage() {
             <button
               type="submit"
               disabled={submitting || !question.trim()}
-              className="px-6 py-3 rounded-lg bg-electric hover:bg-electric/90 text-white font-semibold text-sm transition-colors disabled:opacity-50 flex items-center gap-2 shadow-subtle flex-shrink-0"
+              className="px-6 py-3 rounded-lg bg-electric hover:brightness-110 active:brightness-95 text-black font-bold text-sm transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(200,244,50,0.2)] flex-shrink-0 cursor-pointer"
             >
               {submitting ? (
                 <span>Routing...</span>

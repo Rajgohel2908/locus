@@ -1,8 +1,8 @@
-﻿
+
 # Security Fixes Remediation Report
 
 **Date:** 2026-10-15  
-**Project:** Sift Backend (FastAPI + PostgreSQL pgvector RAG Pipeline)  
+**Project:** LOCUS Backend (FastAPI + PostgreSQL pgvector RAG Pipeline)  
 **Remediation Scope:** 6 Identified Security Findings (`SEC-STAT-01`, `SEC-P1-05`, `SEC-P2-07`, `SEC-P1-01`, `SEC-DEP-01`, `SEC-P1-03`)  
 **Status:** All 6 issues remediated, tested, and verified with zero breaking changes.
 

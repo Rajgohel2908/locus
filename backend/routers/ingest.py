@@ -61,7 +61,7 @@ def ingest_url(body: IngestUrlRequest, db: Session = Depends(get_db)):
     Crawl a website and store extracted text as documents.
 
     - Validates URL and performs SSRF protection.
-    - Respects robots.txt (user-agent: SiftBot).
+    - Respects robots.txt (user-agent: LocusBot).
     - Discovers pages via sitemap.xml (with one level of sitemap index support).
     - Applies 1.5s inter-host delay, 10s timeout, 5MB response limit, max 3 redirects.
     - Extracts main content using trafilatura (no JavaScript execution).

@@ -196,7 +196,7 @@ def test_path_traversal_filename():
         resp = requests.post(f"{BASE_URL}/upload", files=files, timeout=10)
         
         # Check if saved file escaped or caused issue
-        # Sift stores filename in database `files.filename` without writing arbitrary filesystem paths (it processes in memory or buffers)
+        # LOCUS stores filename in database `files.filename` without writing arbitrary filesystem paths (it processes in memory or buffers)
         # Verify filename stored in DB does not leak or cause path traversal
         if resp.status_code == 200:
             data = resp.json()
